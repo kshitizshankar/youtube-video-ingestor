@@ -20,6 +20,10 @@ dependencies = [
     "torchvision>=0.23.0",
     "whisperx>=3.8.5",
     "yt-dlp>=2026.3.17",
+    "fastapi>=0.136.0",
+    "uvicorn[standard]>=0.44.0",
+    "sse-starlette>=3.3.4",
+    "pywinpty>=3.0.3",
 ]
 
 # Pull torch / torchaudio / torchvision from the official PyTorch CUDA 12.8 index.
