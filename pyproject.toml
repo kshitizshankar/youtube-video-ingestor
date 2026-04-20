@@ -1,0 +1,35 @@
+[project]
+name = "youtube-ingestor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    # NVIDIA runtime DLLs needed by CTranslate2 on Windows. Versions left loose
+    # because torch's CUDA wheels bring in specific pins on Linux.
+    "nvidia-cublas-cu12",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cudnn-cu12",
+    "python-dotenv>=1.2.2",
+    # pyannote.audio 4+ supports modern torchaudio (no AudioMetaData dependency).
+    # whisperx pinned old pyannote, so we override here.
+    "pyannote-audio>=4.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+    "torchvision>=0.23.0",
+    "whisperx>=3.8.5",
+    "yt-dlp>=2026.3.17",
+]
+
+# Pull torch / torchaudio / torchvision from the official PyTorch CUDA 12.8 index.
+# PyPI only serves CPU-only wheels on Windows.
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Generated transcripts and downloaded audio
+output/
+
+# Editor / tool state
+.claude/
+.obsidian/
+.idea/
+.vscode/
+
+# Python tooling
+.python-version
