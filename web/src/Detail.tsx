@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { getTranscript, openTranscribeStream } from "./api";
-import ResizeHandle from "./components/ResizeHandle";
-import TerminalPanel from "./components/Terminal";
+import { getAnalysis, getTranscript, openTranscribeStream, triggerAnalyze } from "./api";
 import TopBar from "./components/TopBar";
 import TranscriptPane from "./components/TranscriptPane";
 import VideoPlayer, { type VideoPlayerHandle } from "./components/VideoPlayer";
-import type { Segment } from "./types";
-
-const VIDEO_HEIGHT_KEY = "vvi.videoHeightPx";
-const MIN_VIDEO_PX = 180;
-const MIN_TAIL_PX = 260; // meta + terminal reserved below
+import type { Analysis, Segment } from "./types";
 
 
 export interface DetailProps {
@@ -24,6 +18,8 @@ export interface DetailProps {
   onPendingIngestConsumed?: () => void;
   /** Called when the ingest completes — parent uses to bump library refreshKey. */
   onIngestDone?: () => void;
+  /** Open the mobile drawer. Only used on narrow viewports. */
+  onMenuToggle?: () => void;
 }
 
 function fmtDuration(sec: number | null): string | null {
@@ -34,8 +30,16 @@ function fmtDuration(sec: number | null): string | null {
   return `${m} min`;
 }
 
+function HamburgerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M3 6h18M3 12h18M3 18h18" />
+    </svg>
+  );
+}
+
 export default function Detail({
-  pendingIngestUrl, onPendingIngestConsumed, onIngestDone,
+  pendingIngestUrl, onPendingIngestConsumed, onIngestDone, onMenuToggle,
 }: DetailProps) {
   const { videoId } = useParams<{ videoId: string }>();
   const navigate = useNavigate();
@@ -49,29 +53,14 @@ export default function Detail({
   const [diarized, setDiarized] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
 
   const playerRef = useRef<VideoPlayerHandle>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const esRef = useRef<EventSource | null>(null);
-
-  // Resizable video / terminal split (persisted)
-  const leftColRef = useRef<HTMLDivElement>(null);
-  const [videoHeight, setVideoHeight] = useState<number>(() => {
-    const saved = localStorage.getItem(VIDEO_HEIGHT_KEY);
-    const n = saved ? parseInt(saved, 10) : NaN;
-    return Number.isFinite(n) && n > 0 ? n : 440;
-  });
-  useEffect(() => {
-    localStorage.setItem(VIDEO_HEIGHT_KEY, String(videoHeight));
-  }, [videoHeight]);
-
-  const onResizeDelta = useCallback((deltaPx: number) => {
-    setVideoHeight((h) => {
-      const colH = leftColRef.current?.clientHeight ?? window.innerHeight - 56;
-      const max = Math.max(MIN_VIDEO_PX + 1, colH - MIN_TAIL_PX);
-      return Math.max(MIN_VIDEO_PX, Math.min(max, h + deltaPx));
-    });
-  }, []);
 
   // Load existing transcript (if any) when videoId changes
   useEffect(() => {
@@ -84,6 +73,8 @@ export default function Detail({
     setBusy(false);
     setTitle("Loading…");
     setDiarized(false);
+    setAnalysis(null);
+    setAnalysisError(null);
 
     getTranscript(videoId)
       .then((t) => {
@@ -97,11 +88,32 @@ export default function Detail({
       })
       .catch(() => {
         if (cancelled) return;
-        // No transcript yet — likely an in-progress ingest.
         setTitle(videoId);
         setStatus("Not transcribed yet");
       });
+
+    setAnalysisLoading(true);
+    getAnalysis(videoId)
+      .then((a) => { if (!cancelled) setAnalysis(a); })
+      .catch(() => { /* swallow — endpoint can 404 */ })
+      .finally(() => { if (!cancelled) setAnalysisLoading(false); });
+
     return () => { cancelled = true; };
+  }, [videoId]);
+
+  const handleRegenerateAnalysis = useCallback(async () => {
+    if (!videoId) return;
+    setRegenerating(true);
+    setAnalysisError(null);
+    try {
+      await triggerAnalyze(videoId);
+      const a = await getAnalysis(videoId);
+      setAnalysis(a);
+    } catch (e) {
+      setAnalysisError(String(e));
+    } finally {
+      setRegenerating(false);
+    }
   }, [videoId]);
 
   // Keep latest prop callbacks + pending URL in refs so we can trigger the
@@ -165,6 +177,10 @@ export default function Detail({
       es.close();
       if (esRef.current === es) esRef.current = null;
       doneFnRef.current?.();
+      // Pull the analysis the server should have just generated.
+      if (videoId) {
+        getAnalysis(videoId).then((a) => setAnalysis(a)).catch(() => {});
+      }
     });
     es.addEventListener("error", (ev) => {
       const me = ev as MessageEvent;
@@ -199,28 +215,39 @@ export default function Detail({
   return (
     <div className="main">
       <TopBar
+        leading={
+          onMenuToggle && (
+            <button
+              type="button"
+              className="btn-hamburger"
+              onClick={onMenuToggle}
+              aria-label="Open menu"
+            >
+              <HamburgerIcon />
+            </button>
+          )
+        }
         crumbs={[
           { label: "Library", to: "/" },
           title,
         ]}
         actions={
           <>
-            <Link to="/" className="btn btn-ghost">
+            <Link to="/" className="btn btn-ghost hide-on-narrow">
               ← Library
             </Link>
           </>
         }
       />
       <div className="detail-body">
-        <div className="detail-left" ref={leftColRef}>
-          <div className="video-wrap" style={{ height: `${videoHeight}px` }}>
+        <div className="detail-left">
+          <div className="video-wrap">
             <VideoPlayer
               videoId={videoId}
               onTimeUpdate={setCurrentTime}
               ref={playerRef}
             />
           </div>
-          <ResizeHandle onDelta={onResizeDelta} />
           <div className="video-meta">
             <h2>{title}</h2>
             <div className="vm-sub">
@@ -233,7 +260,6 @@ export default function Detail({
               {!busy && status && <span style={{ color: "var(--ink-3)" }}>{status}</span>}
             </div>
           </div>
-          <TerminalPanel videoId={videoId} />
         </div>
         <TranscriptPane
           segments={segments}
@@ -245,6 +271,11 @@ export default function Detail({
           startedAt={startedAt}
           lastEventAt={lastEventAt}
           duration={duration}
+          analysis={analysis}
+          analysisLoading={analysisLoading}
+          analysisError={analysisError}
+          onRegenerateAnalysis={handleRegenerateAnalysis}
+          regenerating={regenerating}
         />
       </div>
     </div>

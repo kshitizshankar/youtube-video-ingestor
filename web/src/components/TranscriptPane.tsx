@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
-import type { Segment } from "../types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Analysis, Segment } from "../types";
+import ChaptersView from "./ChaptersView";
+import HighlightsView from "./HighlightsView";
 import IngestStatus from "./IngestStatus";
+import SummaryView from "./SummaryView";
 import TranscriptSegment from "./TranscriptSegment";
+
+export type Tab = "transcript" | "summary" | "highlights" | "chapters";
 
 export interface TranscriptPaneProps {
   segments: Segment[];
@@ -14,12 +19,17 @@ export interface TranscriptPaneProps {
   startedAt?: number | null;
   lastEventAt?: number | null;
   duration?: number | null;
+  // Analysis (summary / highlights / chapters)
+  analysis: Analysis | null;
+  analysisLoading: boolean;
+  analysisError?: string | null;
+  onRegenerateAnalysis?: () => void;
+  regenerating?: boolean;
 }
 
 const TONES = ["s1", "s2", "s3", "s4"] as const;
 
 function speakerInitials(name: string): string {
-  // SPEAKER_00 → S0, SPEAKER_01 → S1, otherwise first two letters.
   const m = name.match(/SPEAKER_(\d+)/i);
   if (m) return `S${parseInt(m[1], 10)}`;
   return name.slice(0, 2).toUpperCase();
@@ -35,22 +45,22 @@ function findActiveIndex(segments: Segment[], t: number): number {
   let lo = 0, hi = segments.length - 1, ans = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (segments[mid].start <= t) {
-      ans = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
+    if (segments[mid].start <= t) { ans = mid; lo = mid + 1; }
+    else { hi = mid - 1; }
   }
   return ans;
 }
 
-export default function TranscriptPane({
-  segments, currentTime, followLive, onSeek,
-  busy = false, phase = "", startedAt = null, lastEventAt = null, duration = null,
-}: TranscriptPaneProps) {
+export default function TranscriptPane(props: TranscriptPaneProps) {
+  const {
+    segments, currentTime, followLive, onSeek,
+    busy = false, phase = "", startedAt = null, lastEventAt = null, duration = null,
+    analysis, analysisLoading, analysisError, onRegenerateAnalysis, regenerating,
+  } = props;
+
+  const [tab, setTab] = useState<Tab>("transcript");
   const lastSegEnd = segments.length > 0 ? segments[segments.length - 1].end : 0;
-  // Map every distinct speaker to a tone class, in encounter order.
+
   const speakerTone = useMemo(() => {
     const m = new Map<string, string>();
     let i = 0;
@@ -73,31 +83,45 @@ export default function TranscriptPane({
   const activeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (followLive && bodyRef.current) {
+    if (followLive && bodyRef.current && tab === "transcript") {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
-  }, [segments.length, followLive]);
+  }, [segments.length, followLive, tab]);
 
   useEffect(() => {
-    if (followLive) return;
+    if (tab !== "transcript" || followLive) return;
     if (activeIdx < 0) return;
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [activeIdx, followLive]);
+  }, [activeIdx, followLive, tab]);
+
+  const TabButton = ({ id, label, count }: { id: Tab; label: string; count?: number }) => (
+    <button
+      className={`tr-tab ${tab === id ? "active" : ""}`}
+      onClick={() => setTab(id)}
+    >
+      {label}
+      {typeof count === "number" && count > 0 && (
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, marginLeft: 4 }}>{count}</span>
+      )}
+    </button>
+  );
 
   return (
     <section className="transcript-pane">
       <div className="transcript-top">
         <div className="transcript-tabs">
-          <button className="tr-tab active">Transcript</button>
-          <button className="tr-tab" disabled style={{ opacity: 0.3 }}>Summary</button>
-          <button className="tr-tab" disabled style={{ opacity: 0.3 }}>Highlights</button>
-          <button className="tr-tab" disabled style={{ opacity: 0.3 }}>Chapters</button>
+          <TabButton id="transcript" label="Transcript" />
+          <TabButton id="summary" label="Summary" />
+          <TabButton id="highlights" label="Highlights" count={analysis?.highlights.length} />
+          <TabButton id="chapters" label="Chapters" count={analysis?.chapters.length} />
         </div>
-        <div className="tr-search">
-          <SearchIcon />
-          <input placeholder="Search in transcript…" />
-          <span className="kbd">Ctrl F</span>
-        </div>
+        {tab === "transcript" && (
+          <div className="tr-search">
+            <SearchIcon />
+            <input placeholder="Search in transcript…" />
+            <span className="kbd">Ctrl F</span>
+          </div>
+        )}
         <IngestStatus
           busy={busy}
           phase={phase}
@@ -108,30 +132,66 @@ export default function TranscriptPane({
           duration={duration}
         />
       </div>
-      <div className="transcript-body" ref={bodyRef}>
-        {segments.length === 0 && (
-          <div className="tr-loading">
-            <span className="dot" /> Waiting for transcript…
-          </div>
-        )}
-        {segments.map((seg, i) => {
-          const speaker = seg.speaker ?? "_";
-          const tone = speakerTone.get(speaker) ?? "s1";
-          const isActive = i === activeIdx;
-          return (
-            <div key={seg.id} ref={isActive ? activeRef : undefined}>
-              <TranscriptSegment
-                seg={seg}
-                toneClass={tone}
-                speakerLabel={seg.speaker ? speakerDisplay(seg.speaker) : "—"}
-                initials={seg.speaker ? speakerInitials(seg.speaker) : "·"}
-                current={isActive}
-                onSeek={onSeek}
-              />
+
+      {tab === "transcript" && (
+        <div className="transcript-body" ref={bodyRef}>
+          {segments.length === 0 && (
+            <div className="tr-loading">
+              <span className="dot" /> Waiting for transcript…
             </div>
-          );
-        })}
-      </div>
+          )}
+          {segments.map((seg, i) => {
+            const speaker = seg.speaker ?? "_";
+            const tone = speakerTone.get(speaker) ?? "s1";
+            const isActive = i === activeIdx;
+            return (
+              <div key={seg.id} ref={isActive ? activeRef : undefined}>
+                <TranscriptSegment
+                  seg={seg}
+                  toneClass={tone}
+                  speakerLabel={seg.speaker ? speakerDisplay(seg.speaker) : "—"}
+                  initials={seg.speaker ? speakerInitials(seg.speaker) : "·"}
+                  current={isActive}
+                  onSeek={onSeek}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "summary" && (
+        <div className="transcript-body">
+          <SummaryView
+            analysis={analysis}
+            loading={analysisLoading}
+            error={analysisError}
+            onRegenerate={onRegenerateAnalysis}
+            regenerating={regenerating}
+          />
+        </div>
+      )}
+
+      {tab === "highlights" && (
+        <div className="transcript-body">
+          <HighlightsView
+            analysis={analysis}
+            loading={analysisLoading}
+            onSeek={onSeek}
+          />
+        </div>
+      )}
+
+      {tab === "chapters" && (
+        <div className="transcript-body">
+          <ChaptersView
+            analysis={analysis}
+            loading={analysisLoading}
+            currentTime={currentTime}
+            onSeek={onSeek}
+          />
+        </div>
+      )}
     </section>
   );
 }

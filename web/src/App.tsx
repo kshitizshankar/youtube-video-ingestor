@@ -4,6 +4,7 @@ import {
   Navigate,
   Route,
   Routes,
+  useLocation,
   useNavigate,
 } from "react-router-dom";
 import { extractVideoId, listTranscripts } from "./api";
@@ -19,11 +20,16 @@ function Shell() {
   const [items, setItems] = useState<TranscriptSummary[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [ingestOpen, setIngestOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   // When user submits an ingest, we navigate to /v/<id> AND set this so the
   // Detail screen knows to start the stream against this URL.
   const [pendingIngestUrl, setPendingIngestUrl] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Close the mobile drawer whenever we navigate (e.g. tapping a library row).
+  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     listTranscripts().then(setItems).catch(console.error);
@@ -59,14 +65,31 @@ function Shell() {
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  const toggleDrawer = useCallback(() => setDrawerOpen((v) => !v), []);
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${drawerOpen ? " drawer-open" : ""}`}>
       <Sidebar
         libraryCount={items.length}
         onNewIngest={() => setIngestOpen(true)}
       />
+      <button
+        type="button"
+        className="drawer-backdrop"
+        aria-label="Close menu"
+        onClick={() => setDrawerOpen(false)}
+      />
       <Routes>
-        <Route path="/" element={<Library onAdd={() => setIngestOpen(true)} refreshKey={refreshKey} />} />
+        <Route
+          path="/"
+          element={
+            <Library
+              onAdd={() => setIngestOpen(true)}
+              onMenuToggle={toggleDrawer}
+              refreshKey={refreshKey}
+            />
+          }
+        />
         <Route
           path="/v/:videoId"
           element={
@@ -74,6 +97,7 @@ function Shell() {
               pendingIngestUrl={pendingIngestUrl}
               onPendingIngestConsumed={() => setPendingIngestUrl(null)}
               onIngestDone={refresh}
+              onMenuToggle={toggleDrawer}
             />
           }
         />

@@ -42,6 +42,27 @@ export type SseEvent =
         realtime_factor: number;
         duration_sec: number;
         files: Record<string, string>;
+        analyzed?: boolean;
       };
     }
   | { event: "error"; data: { message: string } };
+
+export interface Chapter {
+  start: number;
+  title: string;
+}
+
+export interface Highlight {
+  start: number;
+  end: number;
+  speaker: string | null;
+  quote: string;
+  reason: string;
+}
+
+export interface Analysis {
+  summary: string;
+  takeaways: string[];
+  chapters: Chapter[];
+  highlights: Highlight[];
+}

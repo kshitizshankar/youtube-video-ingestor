@@ -17,10 +17,14 @@ export default function TerminalPanel({ videoId }: TerminalPanelProps) {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Narrow viewport → smaller terminal font. xterm uses a canvas/WebGL
+    // renderer, so CSS won't resize text — we set this at construction.
+    const isMobile = window.matchMedia("(max-width: 640px)").matches;
+
     const term = new XTerm({
       cursorBlink: true,
       fontFamily: '"Geist Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace',
-      fontSize: 12.5,
+      fontSize: isMobile ? 10.5 : 12.5,
       lineHeight: 1.32,
       theme: {
         background: "#0f0d0b",
@@ -53,12 +57,16 @@ export default function TerminalPanel({ videoId }: TerminalPanelProps) {
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // canvas/dom fallback
+    // WebGL rendering is flaky on some mobile browsers (Safari in particular
+    // scales canvas oddly at high DPR). Skip on narrow viewports.
+    if (!isMobile) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      } catch {
+        // canvas/dom fallback
+      }
     }
     // Defer the initial fit until the browser has actually laid out the
     // container — otherwise we size the terminal to 0 cols × 0 rows and

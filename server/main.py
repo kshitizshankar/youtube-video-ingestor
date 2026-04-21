@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from . import auth, transcripts
+from .analyze import analyze_video
 from .layout import migrate_flat_outputs, video_dir
 from .pty_handler import handle_pty_session
 from .transcriber import TranscribeRequest, stream_transcription
@@ -72,6 +73,27 @@ def api_get_transcript(video_id: str):
     if data is None:
         raise HTTPException(status_code=404, detail=f"No transcript for {video_id}")
     return data
+
+
+@app.get("/api/transcripts/{video_id}/analysis", dependencies=[Depends(auth.require_http)])
+def api_get_analysis(video_id: str):
+    import json
+    p = video_dir(OUTPUT_DIR, video_id) / "analysis.json"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="no analysis yet")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+@app.post("/api/transcripts/{video_id}/analyze", dependencies=[Depends(auth.require_http)])
+async def api_trigger_analyze(video_id: str):
+    """Regenerate (or generate for the first time) analysis.json for an
+    existing transcript. Runs `claude -p` in a worker thread — can take
+    minutes for a long video."""
+    import anyio
+    path = await anyio.to_thread.run_sync(analyze_video, OUTPUT_DIR, video_id)
+    if path is None:
+        raise HTTPException(status_code=500, detail="analysis failed or claude unavailable")
+    return {"ok": True, "path": path.name}
 
 
 # ---------------------------------------------------------------------------

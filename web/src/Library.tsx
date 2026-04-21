@@ -6,6 +6,7 @@ import type { TranscriptSummary } from "./types";
 
 export interface LibraryProps {
   onAdd: () => void;
+  onMenuToggle?: () => void;
   refreshKey?: number;
 }
 
@@ -16,7 +17,7 @@ function totalHours(items: TranscriptSummary[]): string {
   return `${h.toFixed(1)}h`;
 }
 
-export default function Library({ onAdd, refreshKey }: LibraryProps) {
+export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProps) {
   const [items, setItems] = useState<TranscriptSummary[]>([]);
   const [filter, setFilter] = useState<"all" | "diarized">("all");
 
@@ -31,13 +32,25 @@ export default function Library({ onAdd, refreshKey }: LibraryProps) {
     <div className="main">
       <TopBar
         title="Library"
+        leading={
+          onMenuToggle && (
+            <button
+              type="button"
+              className="btn-hamburger"
+              onClick={onMenuToggle}
+              aria-label="Open menu"
+            >
+              <HamburgerIcon />
+            </button>
+          )
+        }
         actions={
           <>
-            <button className="btn">
+            <button className="btn hide-on-narrow">
               <FilterIcon /> Filter
             </button>
             <button className="btn btn-primary" onClick={onAdd}>
-              <PlusIcon /> Add video
+              <PlusIcon /> Add
             </button>
           </>
         }
@@ -133,6 +146,13 @@ function SpeakerGlyph() {
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 1 0 6 0V5a3 3 0 0 0-3-3z" />
       <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+    </svg>
+  );
+}
+function HamburgerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M3 6h18M3 12h18M3 18h18" />
     </svg>
   );
 }

@@ -1,5 +1,5 @@
 import { authFetch, withAuthQuery } from "./auth";
-import type { Transcript, TranscriptSummary } from "./types";
+import type { Analysis, Transcript, TranscriptSummary } from "./types";
 
 export async function listTranscripts(): Promise<TranscriptSummary[]> {
   const r = await authFetch("/api/transcripts");
@@ -11,6 +11,23 @@ export async function getTranscript(id: string): Promise<Transcript> {
   const r = await authFetch(`/api/transcripts/${id}`);
   if (!r.ok) throw new Error(`get ${id} failed: ${r.status}`);
   return r.json();
+}
+
+/** Returns parsed analysis.json, or null if it doesn't exist yet (404). */
+export async function getAnalysis(id: string): Promise<Analysis | null> {
+  const r = await authFetch(`/api/transcripts/${id}/analysis`);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`analysis ${id} failed: ${r.status}`);
+  return r.json();
+}
+
+/** Manually re-run the Claude analysis pipeline for a video. Long-running. */
+export async function triggerAnalyze(id: string): Promise<void> {
+  const r = await authFetch(`/api/transcripts/${id}/analyze`, { method: "POST" });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`analyze ${id} failed: ${r.status} ${body}`);
+  }
 }
 
 export interface TranscribeOptions {

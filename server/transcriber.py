@@ -322,6 +322,25 @@ async def stream_transcription(
                 result["language"], result["language_probability"],
                 result["diarized"], result["segments"], req.url,
             )
+
+            # Kick off Claude-powered analysis (summary / highlights / chapters).
+            # We run inside the same worker thread so the SSE connection stays
+            # open with a visible phase; skipped silently if claude CLI is missing.
+            from .analyze import analyze_video
+            push("phase", {
+                "phase": "analyzing",
+                "message": "Generating summary, highlights & chapters...",
+            })
+            analysis_ok = False
+            try:
+                analysis_path = analyze_video(out_dir, video_id)
+                analysis_ok = analysis_path is not None
+            except Exception as e:  # pragma: no cover — best-effort step
+                push("phase", {
+                    "phase": "analyzing",
+                    "message": f"Analysis skipped: {type(e).__name__}",
+                })
+
             duration = info.get("duration") or 0
             rt = (duration / result["elapsed_sec"]) if result["elapsed_sec"] > 0 and duration else 0
             push("done", {
@@ -330,6 +349,7 @@ async def stream_transcription(
                 "realtime_factor": rt,
                 "duration_sec": duration,
                 "files": {k: str(v.name) for k, v in files.items()},
+                "analyzed": analysis_ok,
             })
         except Exception as e:
             push("error", {"message": f"{type(e).__name__}: {e}"})
