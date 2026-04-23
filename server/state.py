@@ -203,6 +203,11 @@ def list_active() -> list[dict]:
                 mutated = True
                 continue
             if not st.done and (now - st.last_event_at) > _STALL_SEC:
+                # Queued jobs aren't stalled — they're waiting for a worker
+                # slot in the ThreadPoolExecutor. Only mark genuine stalls
+                # (something past queued with no events for a long time).
+                if (st.phase or "") in ("queued", "starting"):
+                    continue
                 if "stalled" not in (st.phase or ""):
                     st.phase = f"stalled ({st.phase or 'working'})"
                     mutated = True

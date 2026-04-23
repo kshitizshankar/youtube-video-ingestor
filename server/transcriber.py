@@ -469,8 +469,13 @@ async def stream_transcription(
         # it exists even if download fails. yt-dlp may resolve a different
         # canonical id later (e.g. URL had playlist context) — we rekey then.
         preliminary_id = extract_video_id(req.url) or f"pending-{uuid.uuid4().hex[:8]}"
-        # Dedup guard — if there's an active record for this id already, refuse.
-        if state.has_active(preliminary_id):
+        # Dedup vs take-over: the bulk /api/ingests endpoint pre-seeds a
+        # `queued` record so the UI shows the job waiting for a worker slot.
+        # When a worker picks us up here, that record is our own — don't
+        # reject it. Only refuse if another transcription is actually past
+        # the queued/starting boundary (phase like downloading/transcribing/etc).
+        existing = state.get(preliminary_id)
+        if existing is not None and not existing.done and (existing.phase or "") not in ("queued", "starting"):
             push("error", {
                 "message": (
                     f"already running for {preliminary_id} — "
@@ -478,7 +483,9 @@ async def stream_transcription(
                 ),
             })
             return
-        state.begin(preliminary_id, url=req.url)
+        if existing is None:
+            state.begin(preliminary_id, url=req.url)
+        # Either way: mark `queued` (idempotent; a fresh begin starts there too).
         state.update(preliminary_id, phase="queued")
         video_id: str | None = preliminary_id
 
