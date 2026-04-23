@@ -601,6 +601,7 @@ async def stream_transcription(
                 batched=req.batched,
                 batch_size=req.batch_size,
             )
+            persist_video_to_db(out_dir, video_id, info, result, req)
 
             duration = info.get("duration") or 0
             rt = (duration / result["elapsed_sec"]) if result["elapsed_sec"] > 0 and duration else 0
@@ -632,3 +633,137 @@ async def stream_transcription(
         yield msg
         if msg["event"] in ("done", "error"):
             return
+
+
+from datetime import datetime, timezone
+
+
+def _folder_bytes(folder: Path) -> int:
+    import os as _os
+    import stat as _stat
+    total = 0
+    for root, _, files in _os.walk(folder, followlinks=False):
+        for name in files:
+            p = Path(root) / name
+            try:
+                st = p.lstat()
+            except OSError:
+                continue
+            if _stat.S_ISLNK(st.st_mode):
+                continue
+            total += st.st_size
+    return total
+
+
+def persist_video_to_db(
+    out_dir: Path,
+    video_id: str,
+    info: dict,
+    result: dict,
+    req: "TranscribeRequest",
+) -> None:
+    """Upsert a row in `videos` from the transcription outputs. Called
+    right after write_outputs; failures here are logged but don't fail
+    the stream (user still has their disk artifacts)."""
+    import json as _json
+    import logging
+    log = logging.getLogger("server.transcriber.db")
+    try:
+        from .db import open_connection, run_migrations
+        conn = open_connection(out_dir / "app.db")
+    except Exception as e:
+        log.warning("could not open DB to persist %s: %s", video_id, e)
+        return
+    try:
+        run_migrations(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        segments = result.get("segments") or []
+        row = {
+            "id": video_id,
+            "url": req.url,
+            "title": info.get("title"),
+            "channel": info.get("channel") or info.get("uploader"),
+            "channel_id": info.get("channel_id") or info.get("uploader_id"),
+            "channel_url": info.get("channel_url") or info.get("uploader_url"),
+            "channel_follower_count": info.get("channel_follower_count"),
+            "upload_date": info.get("upload_date"),
+            "duration_sec": info.get("duration"),
+            "description": (info.get("description") or "")[:1000] or None,
+            "categories": _json.dumps(info.get("categories") or []),
+            "yt_tags": _json.dumps(info.get("tags") or []),
+            "view_count": info.get("view_count"),
+            "like_count": info.get("like_count"),
+            "comment_count": info.get("comment_count"),
+            "language": result.get("language"),
+            "language_probability": result.get("language_probability"),
+            "diarized": 1 if result.get("diarized") else 0,
+            "speaker_count": len({s.get("speaker") for s in segments if s.get("speaker")}),
+            "segment_count": len(segments),
+            "model": req.model,
+            "compute_type": req.compute_type,
+            "batched": 1 if req.batched else 0,
+            "batch_size": req.batch_size,
+            "transcription_elapsed_sec": result.get("elapsed_sec"),
+            "transcription_realtime_factor": (
+                (info.get("duration") or 0) / result["elapsed_sec"]
+                if result.get("elapsed_sec") else None
+            ),
+            "storage_bytes": _folder_bytes(out_dir / video_id),
+            "transcribed_at": now,
+            "updated_at": now,
+        }
+        conn.execute("""
+            INSERT INTO videos(
+                id, url, title, channel, channel_id, channel_url,
+                channel_follower_count, upload_date, duration_sec, description,
+                categories, yt_tags, view_count, like_count, comment_count,
+                language, language_probability, diarized, speaker_count,
+                segment_count, model, compute_type, batched, batch_size,
+                transcription_elapsed_sec, transcription_realtime_factor,
+                storage_bytes, archived, notes, owner, transcribed_at,
+                created_at, updated_at
+            ) VALUES (
+                :id, :url, :title, :channel, :channel_id, :channel_url,
+                :channel_follower_count, :upload_date, :duration_sec, :description,
+                :categories, :yt_tags, :view_count, :like_count, :comment_count,
+                :language, :language_probability, :diarized, :speaker_count,
+                :segment_count, :model, :compute_type, :batched, :batch_size,
+                :transcription_elapsed_sec, :transcription_realtime_factor,
+                :storage_bytes, 0, NULL, NULL, :transcribed_at,
+                :updated_at, :updated_at
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                url=excluded.url,
+                title=excluded.title,
+                channel=excluded.channel,
+                channel_id=excluded.channel_id,
+                channel_url=excluded.channel_url,
+                channel_follower_count=excluded.channel_follower_count,
+                upload_date=excluded.upload_date,
+                duration_sec=excluded.duration_sec,
+                description=excluded.description,
+                categories=excluded.categories,
+                yt_tags=excluded.yt_tags,
+                view_count=excluded.view_count,
+                like_count=excluded.like_count,
+                comment_count=excluded.comment_count,
+                language=excluded.language,
+                language_probability=excluded.language_probability,
+                diarized=excluded.diarized,
+                speaker_count=excluded.speaker_count,
+                segment_count=excluded.segment_count,
+                model=excluded.model,
+                compute_type=excluded.compute_type,
+                batched=excluded.batched,
+                batch_size=excluded.batch_size,
+                transcription_elapsed_sec=excluded.transcription_elapsed_sec,
+                transcription_realtime_factor=excluded.transcription_realtime_factor,
+                storage_bytes=excluded.storage_bytes,
+                transcribed_at=excluded.transcribed_at,
+                updated_at=excluded.updated_at
+        """, row)
+    except Exception as e:
+        log.warning("persist_video_to_db failed for %s: %s", video_id, e)
+    finally:
+        try: conn.close()
+        except Exception: pass
