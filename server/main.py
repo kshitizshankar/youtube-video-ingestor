@@ -16,13 +16,15 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from . import auth, meta as meta_mod, state, transcripts
+from . import playlist as playlist_mod
 from . import projects as projects_mod
+from . import queue as queue_mod
 from .analyze import analyze_video, stream_analyze_video
 from .db import open_connection, run_migrations
 from .layout import migrate_flat_outputs, video_dir
 from .migrate_data import migrate_data
 from .pty_handler import handle_pty_session
-from .transcriber import TranscribeRequest, stream_transcription
+from .transcriber import TranscribeRequest, extract_video_id, stream_transcription
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +53,7 @@ try:
     run_migrations(_conn)
     migrate_data(_conn, OUTPUT_DIR)
     _conn.close()
+    queue_mod.mark_queued_orphans()
 except Exception as e:
     log.warning("DB bootstrap failed: %s", e)
 
@@ -62,6 +65,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("shutdown")
+def _on_shutdown():
+    queue_mod.on_shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -497,10 +505,174 @@ def api_stats():
 
 
 # ---------------------------------------------------------------------------
+# Playlist preview
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/playlist/preview", dependencies=[Depends(auth.require_http)])
+def api_playlist_preview(body: dict = Body(...)):
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url required")
+    try:
+        preview = playlist_mod.preview_playlist(url)
+    except playlist_mod.PlaylistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Manually unpack dataclasses (FastAPI handles the outer dict).
+    return {
+        "playlist_id": preview.playlist_id,
+        "title": preview.title,
+        "uploader": preview.uploader,
+        "entry_count": preview.entry_count,
+        "entries": [
+            {
+                "id": e.id, "title": e.title,
+                "duration_sec": e.duration_sec,
+                "thumbnail_url": e.thumbnail_url,
+                "url": e.url,
+            } for e in preview.entries
+        ],
+        "failures": [
+            {"id": f.id, "reason": f.reason} for f in preview.failures
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bulk ingest (POST /api/ingests)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/ingests", dependencies=[Depends(auth.require_http)])
+def api_bulk_ingest(body: dict = Body(...)):
+    project_id = body.get("project_id")
+    urls = body.get("urls") or []
+    playlist_url = body.get("playlist_url")
+    options = body.get("options") or {}
+    force = bool(body.get("force"))
+
+    # Resolve the working set of URLs.
+    expanded_urls: list[str] = []
+    if playlist_url:
+        try:
+            preview = playlist_mod.preview_playlist(playlist_url)
+        except playlist_mod.PlaylistError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        expanded_urls.extend(e.url for e in preview.entries)
+    if urls:
+        if not isinstance(urls, list):
+            raise HTTPException(status_code=400, detail="urls must be a list")
+        expanded_urls.extend(str(u) for u in urls)
+
+    if not expanded_urls:
+        raise HTTPException(
+            status_code=400,
+            detail="need at least one of playlist_url or urls",
+        )
+
+    # Extract canonical ids up front for dedup checks.
+    conn = open_connection(OUTPUT_DIR / "app.db")
+    try:
+        kicked: list[str] = []
+        skipped: list[dict] = []
+        hf_token = os.environ.get("HUGGINGFACE_TOKEN")
+        for url in expanded_urls:
+            vid = extract_video_id(url)
+            if vid is not None:
+                existing = conn.execute(
+                    "SELECT archived FROM videos WHERE id=?", (vid,)
+                ).fetchone()
+                if existing is not None and not force:
+                    if existing["archived"]:
+                        skipped.append({"video_id": vid, "reason": "archived"})
+                        continue
+                    # Already-transcribed live video: add to project if given,
+                    # skip transcription.
+                    if project_id:
+                        projects_mod.add_videos(
+                            OUTPUT_DIR, project_id, [vid], conn=conn,
+                        )
+                    skipped.append({"video_id": vid, "reason": "already_transcribed"})
+                    continue
+                if existing is not None and force:
+                    # Force path: drop the DB row so re-ingest is clean.
+                    conn.execute("DELETE FROM videos WHERE id=?", (vid,))
+            # Schedule the ingest.
+            req_opts: dict[str, Any] = {
+                "url": url,
+                "diarize": bool(options.get("diarize", False)),
+                "batched": bool(options.get("batched", True)),
+            }
+            if options.get("model"):
+                req_opts["model"] = str(options["model"])
+            req = TranscribeRequest(**req_opts)
+            track_id = vid or f"pending-{url[-11:]}"
+            state.begin(track_id, url=url)
+            state.update(track_id, phase="queued")
+            queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token)
+            kicked.append(vid or url)
+        return {"job_ids": kicked, "skipped": skipped, "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-job SSE (supersedes URL-driven GET /api/transcribe for new callers)
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/api/ingests/{video_id}/stream",
+    dependencies=[Depends(auth.require_http)],
+)
+async def api_ingest_stream(video_id: str):
+    """SSE stream of events for an in-flight ingest. Reads state.py records
+    and emits diff events as the worker updates them. Useful when the tab
+    that started the ingest died and the user reopened the detail page.
+    """
+    import json as _json
+
+    async def gen():
+        last_phase = None
+        last_segments = -1
+        while True:
+            rec = state.get(video_id)
+            if rec is None:
+                yield {"event": "error", "data": _json.dumps({"message": "no record"})}
+                return
+            if rec.phase != last_phase:
+                yield {"event": "phase", "data": _json.dumps({
+                    "phase": rec.phase, "message": rec.phase,
+                })}
+                last_phase = rec.phase
+            if rec.segments != last_segments:
+                last_segments = rec.segments
+                yield {"event": "heartbeat", "data": _json.dumps({
+                    "segments": rec.segments, "last_end": rec.last_segment_end,
+                })}
+            if rec.done:
+                if rec.error:
+                    yield {"event": "error", "data": _json.dumps({"message": rec.error})}
+                else:
+                    yield {"event": "done", "data": _json.dumps({
+                        "id": rec.id,
+                        "elapsed_sec": (rec.last_event_at - rec.started_at),
+                        "realtime_factor": 0,
+                        "duration_sec": rec.duration_sec or 0,
+                        "files": {},
+                    })}
+                return
+            await asyncio.sleep(1.0)
+
+    return EventSourceResponse(gen())
+
+
+# ---------------------------------------------------------------------------
 # API: SSE transcription stream
 # ---------------------------------------------------------------------------
 
 
+# DEPRECATED: POST /api/ingests + GET /api/ingests/{id}/stream supersedes this for new callers
 @app.get("/api/transcribe", dependencies=[Depends(auth.require_http)])
 async def api_transcribe(
     url: str = Query(...),
