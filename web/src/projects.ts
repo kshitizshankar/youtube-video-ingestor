@@ -1,5 +1,12 @@
 import { authFetch } from "./auth";
-import type { Project, ProjectDetail, Stats } from "./types";
+import type {
+  BulkIngestRequest,
+  BulkIngestResponse,
+  PlaylistPreview,
+  Project,
+  ProjectDetail,
+  Stats,
+} from "./types";
 
 export async function listProjects(): Promise<Project[]> {
   const r = await authFetch("/api/projects");
@@ -67,5 +74,43 @@ export async function removeVideoFromProject(
 export async function getStats(): Promise<Stats> {
   const r = await authFetch("/api/stats");
   if (!r.ok) throw new Error(`getStats: ${r.status}`);
+  return r.json();
+}
+
+// -------------------------------------------------------------------
+// Slice 2 — Playlist preview + bulk ingest
+// -------------------------------------------------------------------
+
+/** Fetch a playlist manifest from the backend without starting any ingests. */
+export async function previewPlaylist(url: string): Promise<PlaylistPreview> {
+  const r = await authFetch("/api/playlist/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    try {
+      const j = JSON.parse(text);
+      throw new Error(j.detail || `previewPlaylist: ${r.status}`);
+    } catch {
+      throw new Error(text || `previewPlaylist: ${r.status}`);
+    }
+  }
+  return r.json();
+}
+
+/** Kick off one or more ingest jobs. Skipped videos are returned so the
+ *  caller can show a summary toast. */
+export async function bulkIngest(body: BulkIngestRequest): Promise<BulkIngestResponse> {
+  const r = await authFetch("/api/ingests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(text || `bulkIngest: ${r.status}`);
+  }
   return r.json();
 }

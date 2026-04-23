@@ -150,3 +150,48 @@ export interface Stats {
   storage_bytes: number;
   latest_videos: StatsVideo[];
 }
+
+// -------------------------------------------------------------------
+// Slice 2 — Playlist preview + bulk ingest
+// -------------------------------------------------------------------
+
+export interface PlaylistEntry {
+  id: string;
+  title: string | null;
+  duration_sec: number | null;
+  thumbnail_url: string | null;
+  url: string;
+}
+
+export interface PlaylistFailure {
+  id: string | null;
+  reason: string;
+}
+
+export interface PlaylistPreview {
+  playlist_id: string;
+  title: string | null;
+  uploader: string | null;
+  entry_count: number;
+  entries: PlaylistEntry[];
+  failures: PlaylistFailure[];
+}
+
+export interface BulkIngestSkipped {
+  video_id: string;
+  reason: "already_transcribed" | "archived" | string;
+}
+
+export interface BulkIngestResponse {
+  job_ids: string[];
+  skipped: BulkIngestSkipped[];
+  project_id: string | null;
+}
+
+export interface BulkIngestRequest {
+  project_id?: string | null;
+  urls?: string[];
+  playlist_url?: string;
+  options?: { diarize?: boolean; model?: string; batched?: boolean };
+  force?: boolean;
+}
