@@ -54,6 +54,8 @@ def _user_pairs() -> list[tuple[str, str]]:
 
 
 def is_enabled() -> bool:
+    if (os.environ.get("AUTH_DISABLED") or "").strip() == "1":
+        return False
     return bool(_user_pairs())
 
 

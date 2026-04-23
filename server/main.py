@@ -9,21 +9,24 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, WebSocket
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from . import auth, meta as meta_mod, state, transcripts
+from . import projects as projects_mod
 from .analyze import analyze_video, stream_analyze_video
+from .db import open_connection, run_migrations
 from .layout import migrate_flat_outputs, video_dir
+from .migrate_data import migrate_data
 from .pty_handler import handle_pty_session
 from .transcriber import TranscribeRequest, stream_transcription
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "output"
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR") or (PROJECT_ROOT / "output"))
 WEB_DIST = PROJECT_ROOT / "web" / "dist"
 
 logging.basicConfig(
@@ -40,6 +43,16 @@ if _counts["migrated"]:
 # Load + persist the job registry. On startup, any non-done entries from
 # the previous run are marked as orphaned (their worker threads are gone).
 state.configure_persistence(OUTPUT_DIR / "_ingests.json")
+
+# Open DB, run schema migrations, and do the one-shot data migration if
+# the marker hasn't been set. Idempotent — safe on every startup.
+try:
+    _conn = open_connection(OUTPUT_DIR / "app.db")
+    run_migrations(_conn)
+    migrate_data(_conn, OUTPUT_DIR)
+    _conn.close()
+except Exception as e:
+    log.warning("DB bootstrap failed: %s", e)
 
 app = FastAPI(title="youtube-video-ingestor", version="0.3.0")
 
@@ -120,6 +133,33 @@ def api_refresh_metadata(video_id: str):
 
     p = video_dir(OUTPUT_DIR, video_id) / "transcript.json"
     p.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Keep the DB row in sync so dashboard / library reflect the refreshed metadata.
+    try:
+        _c = open_connection(OUTPUT_DIR / "app.db")
+        try:
+            _c.execute(
+                "UPDATE videos SET title=?, channel=?, channel_id=?, channel_url=?, "
+                "channel_follower_count=?, upload_date=?, view_count=?, like_count=?, "
+                "comment_count=?, description=?, updated_at=datetime('now') "
+                "WHERE id=?",
+                (
+                    data.get("title"),
+                    data.get("channel"),
+                    data.get("channel_id"),
+                    data.get("channel_url"),
+                    data.get("channel_follower_count"),
+                    data.get("upload_date"),
+                    data.get("view_count"),
+                    data.get("like_count"),
+                    data.get("comment_count"),
+                    data.get("description"),
+                    video_id,
+                ),
+            )
+        finally:
+            _c.close()
+    except Exception as e:
+        log.warning("refresh-metadata DB update failed for %s: %s", video_id, e)
     return {"ok": True}
 
 
@@ -345,6 +385,73 @@ async def api_stream_analyze(video_id: str):
             yield item
 
     return EventSourceResponse(event_gen())
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/projects", dependencies=[Depends(auth.require_http)])
+def api_list_projects():
+    return projects_mod.list_projects(OUTPUT_DIR)
+
+
+@app.post("/api/projects", dependencies=[Depends(auth.require_http)])
+def api_create_project(body: dict = Body(...), response: Response = None):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    proj = projects_mod.create_project(
+        OUTPUT_DIR, name=name, description=body.get("description"),
+    )
+    if response is not None:
+        response.status_code = 201
+    return proj
+
+
+@app.get("/api/projects/{project_id}", dependencies=[Depends(auth.require_http)])
+def api_get_project(project_id: str):
+    data = projects_mod.get_project(OUTPUT_DIR, project_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return data
+
+
+@app.patch("/api/projects/{project_id}", dependencies=[Depends(auth.require_http)])
+def api_update_project(project_id: str, body: dict = Body(...)):
+    ok = projects_mod.update_project(OUTPUT_DIR, project_id, body or {})
+    if not ok:
+        raise HTTPException(status_code=404, detail="not found")
+    return projects_mod.get_project(OUTPUT_DIR, project_id)
+
+
+@app.delete("/api/projects/{project_id}", dependencies=[Depends(auth.require_http)])
+def api_delete_project(project_id: str):
+    if not projects_mod.delete_project(OUTPUT_DIR, project_id):
+        raise HTTPException(status_code=404, detail="not found")
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/videos", dependencies=[Depends(auth.require_http)])
+def api_add_project_videos(project_id: str, body: dict = Body(...)):
+    ids = body.get("video_ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="video_ids must be a list")
+    added = projects_mod.add_videos(OUTPUT_DIR, project_id, ids)
+    if added == -1:
+        raise HTTPException(status_code=404, detail="project not found")
+    return {"added": added}
+
+
+@app.delete(
+    "/api/projects/{project_id}/videos/{video_id}",
+    dependencies=[Depends(auth.require_http)],
+)
+def api_remove_project_video(project_id: str, video_id: str):
+    if not projects_mod.remove_video(OUTPUT_DIR, project_id, video_id):
+        raise HTTPException(status_code=404, detail="membership not found")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
