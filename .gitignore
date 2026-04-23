@@ -34,3 +34,6 @@ web/dist/
 .graphifyignore
 graphify-out/
 .remember/
+
+# Runtime server logs
+logs/
