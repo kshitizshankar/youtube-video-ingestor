@@ -4,8 +4,22 @@ export interface TranscriptSummary {
   duration_sec: number | null;
   language: string | null;
   diarized: boolean;
+  speaker_count?: number;
   model: string | null;
   segment_count: number;
+  tags?: string[];
+  channel?: string | null;
+  channel_url?: string | null;
+  upload_date?: string | null;     // "YYYYMMDD"
+  view_count?: number | null;
+  like_count?: number | null;
+}
+
+export interface VideoMeta {
+  tags: string[];
+  speaker_names: Record<string, string>;
+  notes: string;
+  updated_at: string | null;
 }
 
 export interface Segment {
@@ -26,6 +40,23 @@ export interface Transcript {
   model: string | null;
   compute_type: string | null;
   diarized: boolean;
+  speaker_count?: number;
+  // YouTube-side metadata (captured at ingest time; re-fetchable)
+  channel?: string | null;
+  channel_id?: string | null;
+  channel_url?: string | null;
+  channel_follower_count?: number | null;
+  upload_date?: string | null;   // "YYYYMMDD"
+  view_count?: number | null;
+  like_count?: number | null;
+  comment_count?: number | null;
+  description?: string | null;
+  categories?: string[];
+  yt_tags?: string[];
+  transcription_elapsed_sec?: number | null;
+  transcription_realtime_factor?: number | null;
+  batched?: boolean | null;
+  batch_size?: number | null;
   segments: Segment[];
 }
 
@@ -60,9 +91,22 @@ export interface Highlight {
   reason: string;
 }
 
+export interface AnalysisMeta {
+  generated_at: string | null;
+  duration_ms: number | null;
+  duration_api_ms?: number | null;
+  num_turns?: number | null;
+  cost_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+}
+
 export interface Analysis {
   summary: string;
   takeaways: string[];
   chapters: Chapter[];
   highlights: Highlight[];
+  _meta?: AnalysisMeta;
 }

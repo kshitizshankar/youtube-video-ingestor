@@ -7,10 +7,12 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { extractVideoId, listTranscripts } from "./api";
 import IngestModal from "./components/IngestModal";
 import LoginGate from "./components/LoginGate";
 import Sidebar from "./components/Sidebar";
+import Archive from "./Archive";
 import Detail from "./Detail";
 import Library from "./Library";
 import type { TranscriptSummary } from "./types";
@@ -47,16 +49,17 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const [pendingOpts, setPendingOpts] = useState<{ diarize: boolean; model: string; batched: boolean } | null>(null);
+
   const handleIngest = useCallback(
-    (url: string) => {
+    (url: string, opts: { diarize: boolean; model: string; batched: boolean }) => {
       const id = extractVideoId(url);
       setIngestOpen(false);
       if (id) {
         setPendingIngestUrl(url);
+        setPendingOpts(opts);
         navigate(`/v/${id}`);
       } else {
-        // Couldn't parse the URL client-side — the SSE stream will tell us
-        // the id from yt-dlp. For now, just reject.
         alert("Could not parse a YouTube video ID from that URL.");
       }
     },
@@ -95,12 +98,14 @@ function Shell() {
           element={
             <Detail
               pendingIngestUrl={pendingIngestUrl}
-              onPendingIngestConsumed={() => setPendingIngestUrl(null)}
+              pendingIngestOpts={pendingOpts}
+              onPendingIngestConsumed={() => { setPendingIngestUrl(null); setPendingOpts(null); }}
               onIngestDone={refresh}
               onMenuToggle={toggleDrawer}
             />
           }
         />
+        <Route path="/archive" element={<Archive onMenuToggle={toggleDrawer} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
@@ -116,9 +121,11 @@ function Shell() {
 export default function App() {
   return (
     <LoginGate>
-      <BrowserRouter>
-        <Shell />
-      </BrowserRouter>
+      <Tooltip.Provider delayDuration={180} skipDelayDuration={80}>
+        <BrowserRouter>
+          <Shell />
+        </BrowserRouter>
+      </Tooltip.Provider>
     </LoginGate>
   );
 }

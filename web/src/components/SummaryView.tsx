@@ -8,6 +8,39 @@ export interface SummaryViewProps {
   error?: string | null;
 }
 
+function fmtTokens(n: number | undefined): string {
+  if (!n || n <= 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+function fmtCost(usd: number | undefined): string {
+  if (!usd || usd <= 0) return "$0";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(3)}`;
+}
+
+function fmtMs(ms: number | null | undefined): string | null {
+  if (!ms || ms <= 0) return null;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.floor(s % 60);
+  return `${m}m ${String(rem).padStart(2, "0")}s`;
+}
+
+function relativeTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const deltaSec = (Date.now() - d.getTime()) / 1000;
+  if (deltaSec < 60) return "just now";
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)} min ago`;
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)} hr ago`;
+  return `${Math.floor(deltaSec / 86400)} days ago`;
+}
+
 export default function SummaryView({
   analysis, loading, onRegenerate, regenerating, error,
 }: SummaryViewProps) {
@@ -27,6 +60,9 @@ export default function SummaryView({
       </div>
     );
   }
+  const meta = analysis._meta;
+  const elapsed = fmtMs(meta?.duration_ms);
+  const genAgo = relativeTime(meta?.generated_at);
   return (
     <div className="analysis-wrap">
       <div className="summary-card">
@@ -42,13 +78,31 @@ export default function SummaryView({
           </div>
         ))}
       </div>
-      {onRegenerate && (
-        <div className="analysis-foot">
+      <div className="analysis-foot">
+        {meta && (
+          <div className="analysis-meta" title={meta.generated_at || ""}>
+            {genAgo && <span>Generated {genAgo}</span>}
+            {elapsed && (<><span className="sep">·</span><span>{elapsed}</span></>)}
+            {typeof meta.num_turns === "number" && meta.num_turns > 0 && (
+              <><span className="sep">·</span><span>{meta.num_turns} turn{meta.num_turns === 1 ? "" : "s"}</span></>
+            )}
+            <span className="sep">·</span>
+            <span title="Input / output tokens">
+              {fmtTokens(meta.tokens_in)} in · {fmtTokens(meta.tokens_out)} out
+            </span>
+            {meta.cache_read_tokens && meta.cache_read_tokens > 0 && (
+              <><span className="sep">·</span><span title="Cached input tokens (cheaper)">{fmtTokens(meta.cache_read_tokens)} cached</span></>
+            )}
+            <span className="sep">·</span>
+            <span className="analysis-cost" title="Cost in USD">{fmtCost(meta.cost_usd)}</span>
+          </div>
+        )}
+        {onRegenerate && (
           <button className="btn" onClick={onRegenerate} disabled={regenerating}>
             {regenerating ? "Regenerating…" : "↻ Regenerate"}
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

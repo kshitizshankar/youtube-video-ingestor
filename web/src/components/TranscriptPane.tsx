@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Analysis, Segment } from "../types";
+import type { Analysis, Segment, Transcript } from "../types";
+import AnalysisStatus from "./AnalysisStatus";
 import ChaptersView from "./ChaptersView";
+import CostsView from "./CostsView";
 import HighlightsView from "./HighlightsView";
 import IngestStatus from "./IngestStatus";
 import SummaryView from "./SummaryView";
 import TranscriptSegment from "./TranscriptSegment";
 
-export type Tab = "transcript" | "summary" | "highlights" | "chapters";
+export type Tab = "transcript" | "summary" | "highlights" | "chapters" | "costs";
 
 export interface TranscriptPaneProps {
   segments: Segment[];
@@ -25,17 +27,33 @@ export interface TranscriptPaneProps {
   analysisError?: string | null;
   onRegenerateAnalysis?: () => void;
   regenerating?: boolean;
+  /** Full transcript object used by the AI Costs observability tab. */
+  transcript?: Transcript | null;
+  /** True when Claude is running (either auto post-ingest or manual regen). */
+  analysisBusy?: boolean;
+  analysisStartedAt?: number | null;
+  analysisPhase?: string;
+  analysisTokensIn?: number;
+  analysisTokensOut?: number;
+  analysisCostUsd?: number;
+  /** Map of SPEAKER_XX → user-chosen name, applied everywhere speakers show. */
+  speakerNames?: Record<string, string>;
 }
 
 const TONES = ["s1", "s2", "s3", "s4"] as const;
 
-function speakerInitials(name: string): string {
-  const m = name.match(/SPEAKER_(\d+)/i);
-  if (m) return `S${parseInt(m[1], 10)}`;
+function speakerInitials(name: string, override?: string): string {
+  const src = override && override.trim() ? override.trim() : name;
+  // Use first letter(s) of each word up to 2 chars.
+  const m = src.match(/\b\w/g);
+  if (m && m.length > 0) return m.slice(0, 2).join("").toUpperCase();
+  const s = name.match(/SPEAKER_(\d+)/i);
+  if (s) return `S${parseInt(s[1], 10)}`;
   return name.slice(0, 2).toUpperCase();
 }
 
-function speakerDisplay(name: string): string {
+function speakerDisplay(name: string, override?: string): string {
+  if (override && override.trim()) return override.trim();
   const m = name.match(/SPEAKER_(\d+)/i);
   if (m) return `Speaker ${parseInt(m[1], 10) + 1}`;
   return name;
@@ -56,6 +74,10 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
     segments, currentTime, followLive, onSeek,
     busy = false, phase = "", startedAt = null, lastEventAt = null, duration = null,
     analysis, analysisLoading, analysisError, onRegenerateAnalysis, regenerating,
+    analysisBusy = false, analysisStartedAt = null, analysisPhase = "",
+    analysisTokensIn = 0, analysisTokensOut = 0, analysisCostUsd = 0,
+    transcript = null,
+    speakerNames = {},
   } = props;
 
   const [tab, setTab] = useState<Tab>("transcript");
@@ -114,6 +136,7 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
           <TabButton id="summary" label="Summary" />
           <TabButton id="highlights" label="Highlights" count={analysis?.highlights.length} />
           <TabButton id="chapters" label="Chapters" count={analysis?.chapters.length} />
+          <TabButton id="costs" label="AI Costs" />
         </div>
         {tab === "transcript" && (
           <div className="tr-search">
@@ -130,6 +153,15 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
           segmentCount={segments.length}
           lastSegmentEnd={lastSegEnd}
           duration={duration}
+        />
+        <AnalysisStatus
+          running={analysisBusy}
+          startedAt={analysisStartedAt}
+          phase={analysisPhase}
+          error={analysisError}
+          tokensIn={analysisTokensIn}
+          tokensOut={analysisTokensOut}
+          costUsd={analysisCostUsd}
         />
       </div>
 
@@ -149,8 +181,8 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
                 <TranscriptSegment
                   seg={seg}
                   toneClass={tone}
-                  speakerLabel={seg.speaker ? speakerDisplay(seg.speaker) : "—"}
-                  initials={seg.speaker ? speakerInitials(seg.speaker) : "·"}
+                  speakerLabel={seg.speaker ? speakerDisplay(seg.speaker, speakerNames[seg.speaker]) : "—"}
+                  initials={seg.speaker ? speakerInitials(seg.speaker, speakerNames[seg.speaker]) : "·"}
                   current={isActive}
                   onSeek={onSeek}
                 />
@@ -178,6 +210,7 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
             analysis={analysis}
             loading={analysisLoading}
             onSeek={onSeek}
+            speakerNames={speakerNames}
           />
         </div>
       )}
@@ -189,6 +222,17 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
             loading={analysisLoading}
             currentTime={currentTime}
             onSeek={onSeek}
+          />
+        </div>
+      )}
+
+      {tab === "costs" && (
+        <div className="transcript-body">
+          <CostsView
+            transcript={transcript}
+            analysis={analysis}
+            onRegenerate={onRegenerateAnalysis}
+            regenerating={regenerating}
           />
         </div>
       )}

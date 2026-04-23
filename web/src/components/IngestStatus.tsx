@@ -37,7 +37,12 @@ export default function IngestStatus(props: IngestStatusProps) {
 
   const elapsed = startedAt ? now - startedAt : 0;
   const sinceLast = lastEventAt ? now - lastEventAt : 0;
-  const stalled = busy && sinceLast > 12_000;
+  // Before any segments arrive, whisper is doing model-load + VAD + language
+  // detect + first-chunk inference. 60-90s of silence is completely normal,
+  // especially in sequential (live) mode or with diarization. Only after the
+  // first segment do we start expecting steady events.
+  const stallThresholdMs = segmentCount === 0 ? 90_000 : 20_000;
+  const stalled = busy && sinceLast > stallThresholdMs;
   const pct = duration && duration > 0 ? Math.min(100, (lastSegmentEnd / duration) * 100) : 0;
 
   return (
@@ -56,7 +61,11 @@ export default function IngestStatus(props: IngestStatusProps) {
           </>
         ) : null}
         {stalled && (
-          <span className="is-stall">no update for {Math.floor(sinceLast / 1000)}s</span>
+          <span className="is-stall">
+            {segmentCount === 0
+              ? `warming up — ${Math.floor(sinceLast / 1000)}s`
+              : `no update for ${Math.floor(sinceLast / 1000)}s`}
+          </span>
         )}
       </div>
       {duration ? (

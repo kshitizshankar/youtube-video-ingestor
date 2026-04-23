@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -16,6 +19,37 @@ from typing import Any, AsyncIterator
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 from yt_dlp import YoutubeDL
 
+from . import state
+
+
+# ---------------------------------------------------------------------------
+# Video-ID extraction (mirrors web/src/api.ts#extractVideoId)
+# ---------------------------------------------------------------------------
+
+_YT_ID_RE = re.compile(
+    r"(?:"
+    r"youtube\.com/watch\?v=|"
+    r"youtu\.be/|"
+    r"youtube\.com/embed/|"
+    r"youtube\.com/v/|"
+    r"youtube\.com/shorts/|"
+    r"m\.youtube\.com/watch\?v=|"
+    r"music\.youtube\.com/watch\?v="
+    r")([A-Za-z0-9_-]{11})"
+)
+_BARE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def extract_video_id(url: str) -> str | None:
+    """Accept full YouTube URLs (watch / short / embed / shorts / mobile /
+    music) and bare 11-char IDs. Returns None on anything else."""
+    url = (url or "").strip()
+    m = _YT_ID_RE.search(url)
+    if m:
+        return m.group(1)
+    if _BARE_ID_RE.match(url):
+        return url
+    return None
 from .layout import (
     audio_path as audio_path_for,
     claude_md as claude_md_for,
@@ -98,10 +132,29 @@ def get_cache() -> ModelCache:
 # ---------------------------------------------------------------------------
 
 
+def _ytdlp_cookie_opts() -> dict[str, Any]:
+    """Feed yt-dlp cookies from the user's installed browser (or an exported
+    cookies.txt) to bypass YouTube's "are you a bot" challenge. Controlled
+    via env:
+        YTDLP_COOKIES_BROWSER = chrome|firefox|edge|brave|chromium|opera|vivaldi|safari
+        YTDLP_COOKIES_FILE    = path to a cookies.txt exported from a browser
+    """
+    out: dict[str, Any] = {}
+    cookie_file = (os.environ.get("YTDLP_COOKIES_FILE") or "").strip()
+    browser = (os.environ.get("YTDLP_COOKIES_BROWSER") or "").strip().lower()
+    if cookie_file:
+        out["cookiefile"] = cookie_file
+        return out
+    if browser in {"chrome", "firefox", "edge", "brave", "chromium", "opera", "vivaldi", "safari"}:
+        # yt-dlp expects a tuple (browser, profile, keyring, container).
+        out["cookiesfrombrowser"] = (browser,)
+    return out
+
+
 def download_audio(url: str, out_dir: Path) -> tuple[Path, dict[str, Any]]:
     """Download audio into output/<video_id>/audio.<ext>. Returns the .mp3 path."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    opts = {
+    opts: dict[str, Any] = {
         "format": "bestaudio/best",
         # Per-video subfolder; canonical filename "audio.<ext>".
         "outtmpl": str(out_dir / "%(id)s" / "audio.%(ext)s"),
@@ -111,6 +164,7 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, dict[str, Any]]:
         "quiet": True,
         "no_warnings": True,
     }
+    opts.update(_ytdlp_cookie_opts())
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         path = audio_path_for(out_dir, info["id"])
@@ -132,6 +186,26 @@ def fmt_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def _extract_video_metadata(info: dict) -> dict[str, Any]:
+    """Pluck the useful YouTube metadata yt-dlp gives us for free on every
+    download. All fields optional — older videos that predate this capture
+    will have nothing to show, and the UI degrades gracefully."""
+    description = info.get("description") or ""
+    return {
+        "channel": info.get("channel") or info.get("uploader"),
+        "channel_id": info.get("channel_id") or info.get("uploader_id"),
+        "channel_url": info.get("channel_url") or info.get("uploader_url"),
+        "channel_follower_count": info.get("channel_follower_count"),
+        "upload_date": info.get("upload_date"),  # "YYYYMMDD"
+        "view_count": info.get("view_count"),
+        "like_count": info.get("like_count"),
+        "comment_count": info.get("comment_count"),
+        "description": description[:1000] if description else None,
+        "categories": info.get("categories") or [],
+        "yt_tags": info.get("tags") or [],  # YouTube's own tags, distinct from user tags
+    }
+
+
 def write_outputs(
     out_dir: Path,
     video_id: str,
@@ -143,6 +217,9 @@ def write_outputs(
     diarized: bool,
     segments: list[dict],
     url: str,
+    transcription_elapsed_sec: float | None = None,
+    batched: bool | None = None,
+    batch_size: int | None = None,
 ) -> dict[str, Path]:
     vd = video_dir(out_dir, video_id)
     vd.mkdir(parents=True, exist_ok=True)
@@ -164,6 +241,16 @@ def write_outputs(
 
     txt_p.write_text("\n".join(text_lines), encoding="utf-8")
     srt_p.write_text("\n".join(srt_chunks), encoding="utf-8")
+    duration_sec = info.get("duration") or 0
+    rt_factor: float | None = None
+    if transcription_elapsed_sec and transcription_elapsed_sec > 0 and duration_sec:
+        rt_factor = duration_sec / transcription_elapsed_sec
+
+    unique_speakers = {
+        s.get("speaker") for s in segments if s.get("speaker")
+    }
+    speaker_count = len(unique_speakers)
+
     meta = {
         "url": url,
         "id": info.get("id"),
@@ -174,6 +261,12 @@ def write_outputs(
         "model": model,
         "compute_type": compute_type,
         "diarized": diarized,
+        "speaker_count": speaker_count,
+        "transcription_elapsed_sec": transcription_elapsed_sec,
+        "transcription_realtime_factor": rt_factor,
+        "batched": batched,
+        "batch_size": batch_size,
+        **_extract_video_metadata(info),
         "segments": segments,
     }
     json_p.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -233,6 +326,77 @@ def _run_plain(req: TranscribeRequest, audio_path: Path, info: dict, push) -> di
         "elapsed_sec": elapsed,
         "diarized": False,
     }
+
+
+def _run_post_diarize(
+    audio_path: Path,
+    segments: list[dict],
+    push,
+    hf_token: str,
+    device: str,
+) -> bool:
+    """Run pyannote diarization on the already-transcribed audio and
+    annotate `segments` in-place with speaker labels. Each segment gets the
+    label of the pyannote turn that overlaps it the most.
+
+    Returns True iff at least one segment got a speaker assigned.
+    """
+    if not hf_token:
+        push("phase", {
+            "phase": "diarizing",
+            "message": "Skipping speakers — no HUGGINGFACE_TOKEN",
+        })
+        return False
+    if not segments:
+        return False
+
+    push("phase", {"phase": "diarizing", "message": "Identifying speakers..."})
+
+    try:
+        import whisperx
+        cache = get_cache()
+        # Reuse the lazily-initialized pyannote pipeline from ModelCache.
+        pipeline = cache.get_diarize(hf_token, device if device != "auto" else "cuda")
+
+        audio = whisperx.load_audio(str(audio_path))
+        diar = pipeline(audio)
+
+        turns: list[tuple[float, float, str]] = []
+        if hasattr(diar, "itertracks"):
+            for turn, _, spk in diar.itertracks(yield_label=True):  # type: ignore[attr-defined]
+                turns.append((float(turn.start), float(turn.end), str(spk)))
+        elif hasattr(diar, "iterrows"):
+            for _, row in diar.iterrows():  # type: ignore[attr-defined]
+                turns.append((
+                    float(row["start"]),
+                    float(row["end"]),
+                    str(row["speaker"]),
+                ))
+
+        if not turns:
+            return False
+
+        assigned = 0
+        for seg in segments:
+            s0, s1 = float(seg["start"]), float(seg["end"])
+            best_sp: str | None = None
+            best_overlap = 0.0
+            for t0, t1, sp in turns:
+                overlap = max(0.0, min(s1, t1) - max(s0, t0))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_sp = sp
+            if best_sp:
+                seg["speaker"] = best_sp
+                assigned += 1
+        return assigned > 0
+    except Exception as e:
+        log.warning("post-diarize failed: %s", e)
+        push("phase", {
+            "phase": "diarizing",
+            "message": f"Speaker detection skipped: {type(e).__name__}",
+        })
+        return False
 
 
 def _run_diarize(req: TranscribeRequest, audio_path: Path, info: dict, push, hf_token: str) -> dict:
@@ -299,50 +463,173 @@ async def stream_transcription(
         _emit(loop, queue, event, data)
 
     def worker() -> None:
+        import threading
+
+        # Register the job immediately so /api/ingests + Library strip know
+        # it exists even if download fails. yt-dlp may resolve a different
+        # canonical id later (e.g. URL had playlist context) — we rekey then.
+        preliminary_id = extract_video_id(req.url) or f"pending-{uuid.uuid4().hex[:8]}"
+        # Dedup guard — if there's an active record for this id already, refuse.
+        if state.has_active(preliminary_id):
+            push("error", {
+                "message": (
+                    f"already running for {preliminary_id} — "
+                    "wait for it to finish, or drop it from /api/ingests first"
+                ),
+            })
+            return
+        state.begin(preliminary_id, url=req.url)
+        state.update(preliminary_id, phase="queued")
+        video_id: str | None = preliminary_id
+
+        # Shared mutable box for the heartbeat thread to peek at.
+        hb_state = {"phase": "starting", "started": time.time()}
+        stop_hb = threading.Event()
+
+        def heartbeat() -> None:
+            # Emit a named "heartbeat" SSE event every few seconds so the
+            # client's stall detector doesn't fire while whisperx is stuck
+            # inside a long synchronous block (transcribe / align / diarize
+            # / analyze). Also bump the global state registry's last_event_at
+            # so /api/ingests + the Library "stalled?" pill don't false-fire.
+            while not stop_hb.wait(5.0):
+                try:
+                    if video_id:
+                        state.update(video_id)  # no kwargs → just touches last_event_at
+                    loop.call_soon_threadsafe(queue.put_nowait, {
+                        "event": "heartbeat",
+                        "data": json.dumps({
+                            "phase": hb_state.get("phase") or "working",
+                            "elapsed": time.time() - hb_state["started"],
+                        }, ensure_ascii=False),
+                    })
+                except Exception:
+                    break
+
+        hb_thread = threading.Thread(target=heartbeat, daemon=True)
+        hb_thread.start()
+
+        # Cooperative cancel: raised from a check_cancel() helper so exit is
+        # clean (finally-block runs, worker writes "cancelled" to state).
+        class _Cancelled(Exception):
+            pass
+
+        def check_cancel() -> None:
+            if video_id and state.is_cancel_requested(video_id):
+                raise _Cancelled()
+
         try:
+            check_cancel()
+            hb_state["phase"] = "downloading"
+            state.update(video_id, phase="downloading")
             push("phase", {"phase": "downloading", "message": "Downloading audio..."})
             audio_path, info = download_audio(req.url, out_dir)
-            video_id = info["id"]
+            # yt-dlp gives us the authoritative id; rekey the registry entry
+            # if our regex-based guess differed (e.g. playlist-context URL).
+            actual_id = info["id"]
+            if actual_id != video_id:
+                state.rekey(video_id, actual_id)
+                video_id = actual_id
+            check_cancel()
+            state.update(
+                video_id,
+                phase="downloaded",
+                title=info.get("title"),
+                duration_sec=info.get("duration"),
+            )
             push("downloaded", {
                 "id": video_id,
                 "title": info.get("title"),
                 "duration_sec": info.get("duration"),
             })
-            if req.diarize:
-                if not hf_token:
-                    raise RuntimeError("HUGGINGFACE_TOKEN required for diarization")
-                result = _run_diarize(req, audio_path, info, push, hf_token)
-            else:
-                result = _run_plain(req, audio_path, info, push)
 
-            push("phase", {"phase": "writing", "message": "Writing output files..."})
+            def run_and_track(fn, *args):
+                """Wrap a stage so each yielded segment updates shared state."""
+                return fn(*args)
+
+            # Instrument the plain/diarize runners with a patched push that
+            # also updates global state so cross-tab observers can see things.
+            orig_push = push
+            def tracked_push(event: str, data: dict) -> None:
+                if event == "phase":
+                    hb_state["phase"] = data.get("phase") or data.get("message") or "working"
+                if video_id:
+                    if event == "phase":
+                        state.update(video_id, phase=hb_state["phase"])
+                    elif event == "segment":
+                        state.segment_received(video_id, float(data.get("end", 0)))
+                    elif event in ("analyze_progress", "segment_update"):
+                        # Don't change phase/segments, but DO prove the worker
+                        # is alive — otherwise stall detection fires during
+                        # analyze (no phase/segment events for 60-120s).
+                        state.update(video_id)
+                orig_push(event, data)
+
+            check_cancel()
+            # Always transcribe with faster-whisper (fast, streaming).
+            result = _run_plain(req, audio_path, info, tracked_push)
+
+            check_cancel()
+            # Then run speaker diarization as a post-step. Works in both
+            # live/batched modes, and gracefully skips when the HF token
+            # isn't configured or pyannote fails.
+            diarized = _run_post_diarize(
+                audio_path,
+                result["segments"],
+                tracked_push,
+                hf_token or "",
+                req.device,
+            )
+            result["diarized"] = diarized
+            # Re-emit annotated segments so the streaming UI shows speaker
+            # tags that appeared after the initial transcription.
+            if diarized:
+                for s in result["segments"]:
+                    if "speaker" in s:
+                        tracked_push("segment_update", {
+                            "id": s["id"],
+                            "speaker": s["speaker"],
+                        })
+
+            tracked_push("phase", {"phase": "writing", "message": "Writing output files..."})
             files = write_outputs(
                 out_dir, video_id, info,
                 req.model, req.compute_type,
                 result["language"], result["language_probability"],
                 result["diarized"], result["segments"], req.url,
+                transcription_elapsed_sec=result.get("elapsed_sec"),
+                batched=req.batched,
+                batch_size=req.batch_size,
             )
 
-            # Kick off Claude-powered analysis (summary / highlights / chapters).
-            # We run inside the same worker thread so the SSE connection stays
-            # open with a visible phase; skipped silently if claude CLI is missing.
-            from .analyze import analyze_video
-            push("phase", {
+            from .analyze import stream_analyze_video
+            tracked_push("phase", {
                 "phase": "analyzing",
                 "message": "Generating summary, highlights & chapters...",
             })
             analysis_ok = False
             try:
-                analysis_path = analyze_video(out_dir, video_id)
-                analysis_ok = analysis_path is not None
+                for evt in stream_analyze_video(out_dir, video_id):
+                    t = evt.get("type")
+                    if t == "progress":
+                        # Live sub-step, e.g. "Reading transcript.json", "Running jq…"
+                        tracked_push("analyze_progress", {"message": evt.get("message") or ""})
+                    elif t == "done":
+                        analysis_ok = True
+                    elif t == "error":
+                        tracked_push("analyze_progress", {
+                            "message": f"Analysis failed: {evt.get('message')}",
+                        })
             except Exception as e:  # pragma: no cover — best-effort step
-                push("phase", {
+                tracked_push("phase", {
                     "phase": "analyzing",
                     "message": f"Analysis skipped: {type(e).__name__}",
                 })
 
             duration = info.get("duration") or 0
             rt = (duration / result["elapsed_sec"]) if result["elapsed_sec"] > 0 and duration else 0
+            state.update(video_id, phase="done")
+            state.finish(video_id)
             push("done", {
                 "id": video_id,
                 "elapsed_sec": result["elapsed_sec"],
@@ -351,8 +638,17 @@ async def stream_transcription(
                 "files": {k: str(v.name) for k, v in files.items()},
                 "analyzed": analysis_ok,
             })
+        except _Cancelled:
+            if video_id:
+                state.update(video_id, phase="cancelled")
+                state.finish(video_id, error="cancelled by user")
+            push("error", {"message": "cancelled by user"})
         except Exception as e:
+            if video_id:
+                state.finish(video_id, error=f"{type(e).__name__}: {e}")
             push("error", {"message": f"{type(e).__name__}: {e}"})
+        finally:
+            stop_hb.set()
 
     asyncio.create_task(asyncio.to_thread(worker))
 

@@ -24,6 +24,7 @@ dependencies = [
     "uvicorn[standard]>=0.44.0",
     "sse-starlette>=3.3.4",
     "pywinpty>=3.0.3",
+    "yt-dlp-ejs>=0.8.0",
 ]
 
 # Pull torch / torchaudio / torchvision from the official PyTorch CUDA 12.8 index.

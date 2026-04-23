@@ -4,6 +4,7 @@ export interface HighlightsViewProps {
   analysis: Analysis | null;
   loading: boolean;
   onSeek: (seconds: number) => void;
+  speakerNames?: Record<string, string>;
 }
 
 function fmtTs(sec: number): string {
@@ -22,13 +23,14 @@ function speakerTone(speaker: string | null, idx: number): string {
   return `s${(n % 4) + 1}`;
 }
 
-function speakerLabel(speaker: string | null): string {
+function speakerLabel(speaker: string | null, override?: string): string {
+  if (override && override.trim()) return override.trim();
   if (!speaker) return "—";
   const m = speaker.match(/SPEAKER_(\d+)/i);
   return m ? `Speaker ${parseInt(m[1], 10) + 1}` : speaker;
 }
 
-export default function HighlightsView({ analysis, loading, onSeek }: HighlightsViewProps) {
+export default function HighlightsView({ analysis, loading, onSeek, speakerNames = {} }: HighlightsViewProps) {
   if (loading) {
     return <div className="tr-loading"><span className="dot" /> Loading highlights…</div>;
   }
@@ -49,7 +51,7 @@ export default function HighlightsView({ analysis, loading, onSeek }: Highlights
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSeek(h.start); }}
           >
             <header>
-              {h.speaker && <span className={`tr-speaker ${tone}`}>{speakerLabel(h.speaker)}</span>}
+              {h.speaker && <span className={`tr-speaker ${tone}`}>{speakerLabel(h.speaker, speakerNames[h.speaker])}</span>}
               <button
                 className="tr-time"
                 type="button"

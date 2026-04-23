@@ -1,29 +1,39 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 export interface SidebarProps {
   libraryCount: number;
-  onSearchFocus?: () => void;
   onNewIngest: () => void;
 }
 
-export default function Sidebar({ libraryCount, onSearchFocus, onNewIngest }: SidebarProps) {
+type Theme = "dark" | "light";
+
+function readTheme(): Theme {
+  try {
+    return (localStorage.getItem("vvi.theme") as Theme) || "dark";
+  } catch { return "dark"; }
+}
+
+export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
   const loc = useLocation();
   const onLibrary = loc.pathname === "/" || loc.pathname.startsWith("/library");
+  const [theme, setTheme] = useState<Theme>(readTheme);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-light", theme === "light");
+    try { localStorage.setItem("vvi.theme", theme); } catch {}
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => t === "dark" ? "light" : "dark");
 
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <span className="brand-mark">a</span>
+        <span className="brand-mark">V</span>
         <div>
-          <div className="brand-name">Edu Center</div>
-          <div className="brand-sub">Local · v0.3</div>
+          <div className="brand-name">Vidan</div>
+          <div className="brand-sub">Video Analyzer</div>
         </div>
-      </div>
-
-      <div className="sidebar-search" onClick={onSearchFocus}>
-        <SearchIcon />
-        <input placeholder="Search library…" />
-        <span className="kbd">Ctrl K</span>
       </div>
 
       <div className="nav-group">
@@ -32,6 +42,13 @@ export default function Sidebar({ libraryCount, onSearchFocus, onNewIngest }: Si
           <LibIcon />
           <span>All videos</span>
           <span className="count">{libraryCount}</span>
+        </Link>
+        <Link
+          to="/archive"
+          className={`nav-item ${loc.pathname.startsWith("/archive") ? "active" : ""}`}
+        >
+          <ArchiveIcon />
+          <span>Archive</span>
         </Link>
         <button className="nav-item" onClick={onNewIngest}>
           <PlusIcon />
@@ -60,15 +77,32 @@ export default function Sidebar({ libraryCount, onSearchFocus, onNewIngest }: Si
           <div className="uname">You</div>
           <div className="ustack">Local stack</div>
         </div>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+        </button>
       </div>
     </aside>
   );
 }
 
-function SearchIcon() {
+function SunIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+function MoonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
     </svg>
   );
 }
@@ -88,6 +122,15 @@ function PlusIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="5" rx="1" />
+      <path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4" />
     </svg>
   );
 }

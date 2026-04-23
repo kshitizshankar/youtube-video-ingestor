@@ -66,12 +66,13 @@ export default function LoginGate({ children }: LoginGateProps) {
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={handleSubmit}>
-        <div className="gate-mark">a</div>
+        <div className="gate-mark">V</div>
         <h2>
-          Edu Center<em>.</em>
+          Vidan<em>.</em>
         </h2>
         <p className="gate-sub">
-          This instance is password-protected. Enter your credentials to continue.
+          Video Analyzer · password-protected instance. Enter your credentials
+          to continue.
         </p>
         <label className="gate-field">
           <span>Username</span>

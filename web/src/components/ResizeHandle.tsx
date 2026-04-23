@@ -1,33 +1,40 @@
 import { useCallback, useRef, useState, type PointerEvent } from "react";
 
 export interface ResizeHandleProps {
-  /** Called with a signed pixel delta (positive = drag down). */
+  /** "horizontal" = drag up/down (splits rows). "vertical" = drag left/right
+   *  (splits columns). Default "horizontal". */
+  orientation?: "horizontal" | "vertical";
+  /** Called with a signed pixel delta on the drag axis. For horizontal,
+   *  positive = drag down. For vertical, positive = drag right. */
   onDelta: (deltaPx: number) => void;
   onStart?: () => void;
   onEnd?: () => void;
 }
 
-export default function ResizeHandle({ onDelta, onStart, onEnd }: ResizeHandleProps) {
+export default function ResizeHandle({
+  orientation = "horizontal", onDelta, onStart, onEnd,
+}: ResizeHandleProps) {
   const [dragging, setDragging] = useState(false);
-  const lastY = useRef<number | null>(null);
+  const last = useRef<number | null>(null);
 
   const handleDown = useCallback((e: PointerEvent<HTMLDivElement>) => {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    lastY.current = e.clientY;
+    last.current = orientation === "vertical" ? e.clientX : e.clientY;
     setDragging(true);
     onStart?.();
-  }, [onStart]);
+  }, [onStart, orientation]);
 
   const handleMove = useCallback((e: PointerEvent<HTMLDivElement>) => {
-    if (lastY.current === null) return;
-    const delta = e.clientY - lastY.current;
-    lastY.current = e.clientY;
+    if (last.current === null) return;
+    const pos = orientation === "vertical" ? e.clientX : e.clientY;
+    const delta = pos - last.current;
+    last.current = pos;
     onDelta(delta);
-  }, [onDelta]);
+  }, [onDelta, orientation]);
 
   const finish = useCallback((e: PointerEvent<HTMLDivElement>) => {
-    if (lastY.current === null) return;
-    lastY.current = null;
+    if (last.current === null) return;
+    last.current = null;
     setDragging(false);
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
@@ -37,9 +44,9 @@ export default function ResizeHandle({ onDelta, onStart, onEnd }: ResizeHandlePr
 
   return (
     <div
-      className={`split-handle ${dragging ? "is-dragging" : ""}`}
+      className={`split-handle split-${orientation} ${dragging ? "is-dragging" : ""}`}
       role="separator"
-      aria-orientation="horizontal"
+      aria-orientation={orientation}
       onPointerDown={handleDown}
       onPointerMove={handleMove}
       onPointerUp={finish}

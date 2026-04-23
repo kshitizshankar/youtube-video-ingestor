@@ -26,8 +26,35 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
+def _user_pairs() -> list[tuple[str, str]]:
+    """Collected (user, pass) pairs from env.
+
+    Sources combined (deduped via list order):
+    - BASIC_AUTH_USER / BASIC_AUTH_PASS — single primary account
+    - BASIC_AUTH_USERS — comma-separated `user:pass,user:pass` list for extras
+
+    Passwords with `:` or `,` should go in the single-pair vars, not the list.
+    """
+    pairs: list[tuple[str, str]] = []
+    u = _env("BASIC_AUTH_USER")
+    p = _env("BASIC_AUTH_PASS")
+    if u and p:
+        pairs.append((u, p))
+    extra = _env("BASIC_AUTH_USERS")
+    if extra:
+        for chunk in extra.split(","):
+            chunk = chunk.strip()
+            if not chunk or ":" not in chunk:
+                continue
+            user, _, pw = chunk.partition(":")
+            user, pw = user.strip(), pw.strip()
+            if user and pw:
+                pairs.append((user, pw))
+    return pairs
+
+
 def is_enabled() -> bool:
-    return bool(_env("BASIC_AUTH_USER") and _env("BASIC_AUTH_PASS"))
+    return bool(_user_pairs())
 
 
 def _check_token(token: str) -> bool:
@@ -38,10 +65,10 @@ def _check_token(token: str) -> bool:
     user, sep, password = decoded.partition(":")
     if not sep:
         return False
-    return (
-        secrets.compare_digest(user, _env("BASIC_AUTH_USER"))
-        and secrets.compare_digest(password, _env("BASIC_AUTH_PASS"))
-    )
+    for u, p in _user_pairs():
+        if secrets.compare_digest(user, u) and secrets.compare_digest(password, p):
+            return True
+    return False
 
 
 def _extract(request_headers: dict | None, query_token: str | None) -> str | None:

@@ -11,6 +11,7 @@ wheels/
 
 # Secrets
 .env
+*cookies*.txt
 
 # Generated transcripts and downloaded audio
 output/
@@ -27,3 +28,9 @@ output/
 # Frontend
 web/node_modules/
 web/dist/
+
+# Tool outputs (graphify, remember)
+.graphify_*
+.graphifyignore
+graphify-out/
+.remember/

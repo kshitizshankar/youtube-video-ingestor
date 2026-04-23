@@ -1,5 +1,15 @@
-import { useEffect, useState } from "react";
-import { listTranscripts } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  archiveVideo,
+  type IngestState,
+  listIngests,
+  listTranscripts,
+  type SearchHit,
+  searchTranscripts,
+} from "./api";
+import SearchBar from "./components/SearchBar";
+import SearchResults from "./components/SearchResults";
 import TopBar from "./components/TopBar";
 import VideoRow from "./components/VideoRow";
 import type { TranscriptSummary } from "./types";
@@ -20,13 +30,84 @@ function totalHours(items: TranscriptSummary[]): string {
 export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProps) {
   const [items, setItems] = useState<TranscriptSummary[]>([]);
   const [filter, setFilter] = useState<"all" | "diarized">("all");
+  const [ingests, setIngests] = useState<IngestState[]>([]);
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searchElapsedMs, setSearchElapsedMs] = useState<number | null>(null);
+  const searchGenRef = useRef(0);
 
   useEffect(() => {
     listTranscripts().then(setItems).catch(console.error);
   }, [refreshKey]);
 
+  // Poll active ingests so we can show a "currently ingesting" strip.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const data = await listIngests();
+        if (cancelled) return;
+        setIngests(data);
+        // When an ingest transitions to done, bump the transcripts list too
+        // so the new row appears without a manual refresh.
+        if (data.some((i) => i.done)) {
+          listTranscripts().then((v) => { if (!cancelled) setItems(v); }).catch(() => {});
+        }
+      } catch { /* swallow */ }
+    };
+    tick();
+    const id = window.setInterval(tick, 2500);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   const visible = filter === "diarized" ? items.filter((v) => v.diarized) : items;
   const segCount = items.reduce((acc, v) => acc + (v.segment_count || 0), 0);
+
+  const handleArchive = useCallback(async (id: string) => {
+    try {
+      await archiveVideo(id);
+      setItems((prev) => prev.filter((v) => v.id !== id));
+    } catch (e) {
+      alert(`Archive failed: ${e}`);
+    }
+  }, []);
+
+  // Debounced search across all transcripts.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setHits([]);
+      setSearchErr(null);
+      setSearching(false);
+      setSearchTruncated(false);
+      setSearchElapsedMs(null);
+      return;
+    }
+    const gen = ++searchGenRef.current;
+    setSearching(true);
+    setSearchErr(null);
+    const t0 = performance.now();
+    const timer = window.setTimeout(async () => {
+      try {
+        const resp = await searchTranscripts(trimmed);
+        if (searchGenRef.current !== gen) return; // stale
+        setHits(resp.results);
+        setSearchTruncated(resp.truncated);
+        setSearchElapsedMs(Math.round(performance.now() - t0));
+      } catch (e) {
+        if (searchGenRef.current !== gen) return;
+        setSearchErr(String(e));
+      } finally {
+        if (searchGenRef.current === gen) setSearching(false);
+      }
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const inSearchMode = query.trim().length >= 2;
 
   return (
     <div className="main">
@@ -56,6 +137,9 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         }
       />
       <div className="library">
+        {ingests.length > 0 && (
+          <IngestStrip ingests={ingests} />
+        )}
         <div className="library-hero">
           <div>
             <h2>
@@ -86,6 +170,22 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
             </div>
           </div>
         </div>
+
+        <div className="library-search">
+          <SearchBar value={query} onChange={setQuery} busy={searching} />
+        </div>
+
+        {inSearchMode ? (
+          <SearchResults
+            query={query.trim()}
+            hits={hits}
+            loading={searching}
+            error={searchErr}
+            truncated={searchTruncated}
+            elapsedMs={searchElapsedMs}
+          />
+        ) : (
+          <>
 
         <div className="filters">
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--ink-3)" }}>
@@ -120,7 +220,11 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
             No videos yet. Click <span className="accent">Add video</span> to get started.
           </div>
         ) : (
-          visible.map((v) => <VideoRow key={v.id} v={v} />)
+          visible.map((v) => (
+            <VideoRow key={v.id} v={v} onArchiveToggle={handleArchive} />
+          ))
+        )}
+          </>
         )}
       </div>
     </div>
@@ -155,4 +259,80 @@ function HamburgerIcon() {
       <path d="M3 6h18M3 12h18M3 18h18" />
     </svg>
   );
+}
+
+// -----------------------------------------------------------------
+// IngestStrip — compact live progress for all in-flight ingests
+// -----------------------------------------------------------------
+
+function IngestStrip({ ingests }: { ingests: IngestState[] }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const sorted = [...ingests].sort((a, b) => Number(a.done) - Number(b.done) || b.started_at - a.started_at);
+  return (
+    <section className="ingest-strip">
+      <header>
+        <span className="label">In progress</span>
+        <span className="count">
+          {ingests.filter((i) => !i.done).length} active · {ingests.filter((i) => i.done).length} just finished
+        </span>
+      </header>
+      <div className="ingest-cards">
+        {sorted.map((ing) => (
+          <IngestCard key={ing.id} ing={ing} now={now} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function IngestCard({ ing, now }: { ing: IngestState; now: number }) {
+  const thumb = `https://img.youtube.com/vi/${ing.id}/hqdefault.jpg`;
+  const elapsedSec = Math.max(0, now - ing.started_at);
+  const staleSec = Math.max(0, now - ing.last_event_at);
+  const pct = ing.duration_sec && ing.duration_sec > 0
+    ? Math.min(100, (ing.last_segment_end / ing.duration_sec) * 100)
+    : 0;
+  const stalled = !ing.done && staleSec > 15;
+  const cls = ["job-card"];
+  if (ing.done) cls.push(ing.error ? "is-error" : "is-done");
+  else if (stalled) cls.push("is-stalled");
+  else cls.push("is-busy");
+
+  const phaseLabel = ing.error
+    ? `Error: ${ing.error}`
+    : ing.done
+      ? "Done"
+      : ing.phase || "working";
+
+  return (
+    <Link to={`/v/${ing.id}`} className={cls.join(" ")}>
+      <div className="ic-thumb">
+        <img src={thumb} alt="" loading="lazy" />
+      </div>
+      <div className="ic-body">
+        <div className="ic-title">{ing.title || ing.id}</div>
+        <div className="ic-meta">
+          <span className="ic-phase">{phaseLabel}</span>
+          <span className="ic-sep">·</span>
+          <span>{fmtMinSec(elapsedSec)} elapsed</span>
+          {ing.segments > 0 && (<><span className="ic-sep">·</span><span>{ing.segments} seg</span></>)}
+          {ing.duration_sec ? (<><span className="ic-sep">·</span><span>{pct.toFixed(0)}%</span></>) : null}
+          {stalled && <span className="ic-stall">stalled {Math.floor(staleSec)}s</span>}
+        </div>
+        <div className="ic-bar"><div className="ic-fill" style={{ width: `${pct}%` }} /></div>
+      </div>
+    </Link>
+  );
+}
+
+function fmtMinSec(sec: number): string {
+  const s = Math.floor(sec);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${String(rem).padStart(2, "0")}s`;
 }
