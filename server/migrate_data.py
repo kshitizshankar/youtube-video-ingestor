@@ -295,6 +295,16 @@ def migrate_data(conn, output_dir: Path) -> dict:
             except Exception:
                 log.warning("skipping %s: bad transcript.json", sub.name)
                 continue
+            # Defensive: real YouTube IDs can begin with `_`, so we can't
+            # filter by name prefix. Instead, require the JSON root to be a
+            # dict — catches bogus leftovers like the old output/_ingests/
+            # folder that stored a segments-only list.
+            if not isinstance(tj, dict):
+                log.warning(
+                    "skipping %s: transcript.json is not an object (got %s)",
+                    sub.name, type(tj).__name__,
+                )
+                continue
 
             meta_path = sub / "meta.json"
             meta = {"tags": [], "speaker_names": {}, "notes": ""}
