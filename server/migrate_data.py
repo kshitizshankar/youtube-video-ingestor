@@ -25,13 +25,22 @@ def _iso_now() -> str:
 
 
 def _folder_bytes(folder: Path) -> int:
+    """Sum sizes of every real file under `folder`. Skips symlinks so we
+    don't double-count after migration creates analyses/<id>.json symlinks
+    back into the folder."""
     total = 0
-    for p in folder.rglob("*"):
-        if p.is_file():
+    for root, _, files in os.walk(folder, followlinks=False):
+        for name in files:
+            p = Path(root) / name
             try:
-                total += p.stat().st_size
+                st = p.lstat()
             except OSError:
-                pass
+                continue
+            # S_IFLNK check via lstat — skip symlinks entirely.
+            import stat as _stat
+            if _stat.S_ISLNK(st.st_mode):
+                continue
+            total += st.st_size
     return total
 
 
@@ -141,6 +150,13 @@ def _migrate_analysis(conn, folder: Path, video_id: str) -> bool:
         "SELECT id FROM analyses WHERE video_id = ?", (video_id,)
     ).fetchone()
     if existing is not None:
+        # A stale analysis.json after migration most likely means a manual
+        # re-run dropped a new file; surface it rather than silently ignore.
+        log.warning(
+            "analysis.json present for %s but analyses row already recorded; "
+            "leaving the file untouched",
+            video_id,
+        )
         return False
 
     try:
@@ -170,17 +186,28 @@ def _migrate_analysis(conn, folder: Path, video_id: str) -> bool:
     target_dir = folder / "analyses"
     target_dir.mkdir(exist_ok=True)
     target = target_dir / f"{analysis_id}.json"
+    # Copy before touching src — target becomes the archival truth.
     shutil.copy2(src, target)
 
+    # Try to convert src into a symlink pointing at target, atomically.
+    # If any step fails, src stays intact as a plain file — target is still
+    # the authoritative archival copy. Never leaves src in a missing state.
+    tmp = src.with_name(src.name + ".link.tmp")
     try:
-        src.unlink()
-        os.symlink(target.name, src, target_is_directory=False)
+        if tmp.exists():
+            tmp.unlink()
+        os.symlink(target.name, tmp, target_is_directory=False)
+        os.replace(tmp, src)  # atomic on both POSIX and Windows
     except (OSError, NotImplementedError) as e:
         log.warning(
-            "symlink unavailable (%s); leaving analysis.json as plain copy", e,
+            "symlink unavailable (%s); analysis.json kept as plain file", e,
         )
-        if not src.exists():
-            shutil.copy2(target, src)
+        # Cleanup any partial tmp; swallow errors (best-effort).
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
     conn.execute(
         "UPDATE analyses SET file_path = ? WHERE id = ?",
