@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { createProject, listProjects } from "../projects";
+import type { Project } from "../types";
+import NewProjectModal from "./NewProjectModal";
 
 export interface SidebarProps {
   libraryCount: number;
@@ -14,15 +17,43 @@ function readTheme(): Theme {
   } catch { return "dark"; }
 }
 
+function sortByLastActivity(list: Project[]): Project[] {
+  // Most recent activity first. Projects with no activity sort last.
+  return [...list].sort((a, b) => {
+    const ta = a.last_activity ? Date.parse(a.last_activity) : 0;
+    const tb = b.last_activity ? Date.parse(b.last_activity) : 0;
+    return tb - ta;
+  });
+}
+
 export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
   const loc = useLocation();
-  const onLibrary = loc.pathname === "/" || loc.pathname.startsWith("/library");
+  const onDashboard = loc.pathname === "/";
+  const onLibrary = loc.pathname.startsWith("/library");
+  const onArchive = loc.pathname.startsWith("/archive");
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("theme-light", theme === "light");
     try { localStorage.setItem("vvi.theme", theme); } catch {}
   }, [theme]);
+
+  const reloadProjects = useCallback(() => {
+    listProjects()
+      .then((ps) => setProjects(sortByLastActivity(ps).slice(0, 8)))
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    reloadProjects();
+  }, [reloadProjects]);
+
+  const handleCreate = useCallback(async (name: string, description: string) => {
+    await createProject(name, description || undefined);
+    reloadProjects();
+  }, [reloadProjects]);
 
   const toggleTheme = () => setTheme((t) => t === "dark" ? "light" : "dark");
 
@@ -38,14 +69,18 @@ export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
 
       <div className="nav-group">
         <div className="nav-group-title">Library</div>
-        <Link to="/" className={`nav-item ${onLibrary ? "active" : ""}`}>
+        <Link to="/" className={`nav-item ${onDashboard ? "active" : ""}`}>
+          <DashIcon />
+          <span>Dashboard</span>
+        </Link>
+        <Link to="/library" className={`nav-item ${onLibrary ? "active" : ""}`}>
           <LibIcon />
           <span>All videos</span>
           <span className="count">{libraryCount}</span>
         </Link>
         <Link
           to="/archive"
-          className={`nav-item ${loc.pathname.startsWith("/archive") ? "active" : ""}`}
+          className={`nav-item ${onArchive ? "active" : ""}`}
         >
           <ArchiveIcon />
           <span>Archive</span>
@@ -58,16 +93,24 @@ export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
       </div>
 
       <div className="nav-group">
-        <div className="nav-group-title">Collections</div>
-        <button className="nav-item">
-          <span className="tag-dot" style={{ background: "var(--speaker-1)" }} />
-          <span>AI research</span>
-          <span className="count">—</span>
-        </button>
-        <button className="nav-item">
-          <span className="tag-dot" style={{ background: "var(--speaker-3)" }} />
-          <span>Interviews</span>
-          <span className="count">—</span>
+        <div className="nav-group-title">Projects</div>
+        {projects.map((p) => {
+          const active = loc.pathname === `/p/${p.id}`;
+          return (
+            <Link
+              key={p.id}
+              to={`/p/${p.id}`}
+              className={`nav-item ${active ? "active" : ""}`}
+            >
+              <FolderIcon />
+              <span>{p.name}</span>
+              <span className="count">{p.video_count}</span>
+            </Link>
+          );
+        })}
+        <button className="nav-item" onClick={() => setModalOpen(true)}>
+          <PlusIcon />
+          <span>New project</span>
         </button>
       </div>
 
@@ -87,6 +130,12 @@ export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
           {theme === "dark" ? <SunIcon /> : <MoonIcon />}
         </button>
       </div>
+
+      <NewProjectModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onSubmit={handleCreate}
+      />
     </aside>
   );
 }
@@ -103,6 +152,16 @@ function MoonIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
+    </svg>
+  );
+}
+
+function DashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 13a9 9 0 0 1 18 0" />
+      <path d="M12 13l4-4" />
+      <circle cx="12" cy="13" r="1" />
     </svg>
   );
 }
@@ -131,6 +190,14 @@ function ArchiveIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4" width="18" height="5" rx="1" />
       <path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </svg>
   );
 }

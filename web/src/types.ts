@@ -109,3 +109,44 @@ export interface Analysis {
   highlights: Highlight[];
   _meta?: AnalysisMeta;
 }
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  video_count: number;
+  total_seconds: number;
+  last_activity: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectVideoEntry {
+  id: string;
+  title: string | null;
+  duration_sec: number | null;
+  channel: string | null;
+  archived: boolean;
+  added_at: string;
+}
+
+export interface ProjectDetail {
+  project: Project;
+  videos: ProjectVideoEntry[];
+}
+
+export interface StatsVideo {
+  id: string;
+  title: string | null;
+  duration_sec: number | null;
+  channel: string | null;
+  created_at: string;
+}
+
+export interface Stats {
+  video_count: number;
+  project_count: number;
+  total_seconds: number;
+  storage_bytes: number;
+  latest_videos: StatsVideo[];
+}

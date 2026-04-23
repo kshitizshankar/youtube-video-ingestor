@@ -13,6 +13,7 @@ import IngestModal from "./components/IngestModal";
 import LoginGate from "./components/LoginGate";
 import Sidebar from "./components/Sidebar";
 import Archive from "./Archive";
+import Dashboard from "./Dashboard";
 import Detail from "./Detail";
 import Library from "./Library";
 import type { TranscriptSummary } from "./types";
@@ -85,6 +86,15 @@ function Shell() {
       <Routes>
         <Route
           path="/"
+          element={
+            <Dashboard
+              onMenuToggle={toggleDrawer}
+              onAdd={() => setIngestOpen(true)}
+            />
+          }
+        />
+        <Route
+          path="/library"
           element={
             <Library
               onAdd={() => setIngestOpen(true)}
