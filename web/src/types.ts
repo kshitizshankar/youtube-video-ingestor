@@ -143,12 +143,47 @@ export interface StatsVideo {
   created_at: string;
 }
 
+export interface ChannelStat {
+  channel: string;
+  count: number;
+  total_seconds: number;
+}
+
+export interface LanguageStat {
+  language: string;
+  count: number;
+}
+
+export interface TagStat {
+  tag: string;
+  count: number;
+}
+
+export interface LongestVideoStat {
+  id: string;
+  title: string | null;
+  duration_sec: number;
+  channel: string | null;
+}
+
+export interface RecentAnalysisStat {
+  id: string;
+  title: string | null;
+  finished_at: string | null;
+  provider: string;
+}
+
 export interface Stats {
   video_count: number;
   project_count: number;
   total_seconds: number;
   storage_bytes: number;
   latest_videos: StatsVideo[];
+  by_channel: ChannelStat[];
+  by_language: LanguageStat[];
+  top_tags: TagStat[];
+  longest_videos: LongestVideoStat[];
+  recently_analyzed: RecentAnalysisStat[];
 }
 
 // -------------------------------------------------------------------

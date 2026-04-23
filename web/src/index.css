@@ -1,6 +1,6 @@
 /* ==============================================================
-   Edu Center — design tokens (from Claude Design handoff)
-   Geist + Geist Mono + Instrument Serif
+   Vidan — design tokens
+   Roboto + Roboto Mono + Instrument Serif (hero/display only)
    Warm paper · cool · dark themes
    ============================================================== */
 
@@ -37,8 +37,8 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
-  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --font-serif: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
 
   color-scheme: dark;
@@ -361,7 +361,15 @@ a { color: inherit; text-decoration: none; }
   justify-content: flex-end;
 }
 .stat { text-align: right; flex-shrink: 0; }
-.stat .n { font-family: var(--font-serif); font-size: 32px; line-height: 1; }
+.stat .n {
+  font-family: var(--font-sans);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
 .stat .l {
   font-size: 10.5px; color: var(--ink-3);
   text-transform: uppercase; letter-spacing: 0.6px;
@@ -1127,9 +1135,10 @@ a.vm-channel:hover {
 }
 .tr-time:hover { background: var(--bg-3); color: var(--ink); }
 .tr-text {
-  font-size: 14px; line-height: 1.6;
+  font-size: 15px; line-height: 1.65;
   color: var(--ink); margin-top: 3px;
-  font-family: 'Iowan Old Style', 'Charter', Georgia, serif;
+  font-family: var(--font-sans);
+  max-width: 72ch;
   text-wrap: pretty;
 }
 
@@ -1756,9 +1765,9 @@ a.vm-channel:hover {
   font-variant-numeric: tabular-nums;
 }
 .search-hit-text {
-  font-family: 'Iowan Old Style', 'Charter', Georgia, serif;
-  font-size: 14px;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  line-height: 1.6;
   color: var(--ink);
   text-wrap: pretty;
 }
@@ -2117,18 +2126,19 @@ a.vm-channel:hover {
 }
 .summary-card p {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.65;
+  font-family: var(--font-sans);
   color: var(--ink);
+  max-width: 72ch;
 }
 .takeaway {
   display: grid;
   grid-template-columns: 24px 1fr;
   gap: 8px;
-  padding: 8px 0;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: 10px 0;
+  font-size: 14.5px;
+  line-height: 1.6;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
 }
@@ -2927,8 +2937,9 @@ textarea:focus-visible,
   background: var(--line);
 }
 .stats-strip .stat-num {
-  font-family: var(--font-serif);
-  font-size: 30px;
+  font-family: var(--font-sans);
+  font-size: 28px;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.3px;
   color: var(--ink);
@@ -4388,4 +4399,347 @@ textarea:focus-visible,
 .pe-retry {
   align-self: flex-start;
   font-size: 12px;
+}
+
+/* ==============================================================
+   Dashboard analytics — panel readings (top channels, languages,
+   tags, longest videos, recently analyzed)
+   ============================================================== */
+
+.dash-analytics { padding: 28px 28px 8px; }
+.dash-analytics-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.dash-analytics-kicker {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--ink-3);
+}
+.dash-analytics-head h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 26px;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.analytics-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+/* One hair-thin gradient bar across the top — the panel's "on" light. */
+.analytics-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background-image: var(--gradient);
+  opacity: 0.55;
+}
+.analytics-card .ana-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ana-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink-3);
+}
+.ana-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-4);
+}
+
+/* ---------- Top channels (horizontal bars) -------------------- */
+
+.ana-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ana-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 1.6fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  transition: color 140ms ease;
+}
+.ana-bar-row:hover { color: var(--ink); }
+.ana-bar-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--ink);
+}
+.ana-bar-track {
+  position: relative;
+  height: 6px;
+  background: var(--bg-inset);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ana-bar-fill {
+  display: block;
+  height: 100%;
+  background-image: var(--gradient);
+  border-radius: inherit;
+  transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ana-bar-row:hover .ana-bar-fill { filter: brightness(1.12); }
+.ana-bar-count {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+  text-align: right;
+}
+.ana-bar-dur {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* ---------- Language stacked bar + legend -------------------- */
+
+.ana-stacked-bar {
+  display: flex;
+  height: 10px;
+  width: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+.ana-stacked-seg { display: block; height: 100%; transition: filter 140ms ease; }
+.ana-stacked-bar:hover .ana-stacked-seg { filter: saturate(1.1); }
+
+/* Swatch colors tuned to the cosmic palette, enough separation between
+   neighboring languages that small slivers stay legible. */
+.seg-1 { background: #ff4fb4; }
+.seg-2 { background: #8b5cf6; }
+.seg-3 { background: #22d3ee; }
+.seg-4 { background: #fbbf24; }
+
+.ana-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.ana-lang-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ana-lang-legend li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.ana-lang-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.ana-lang-count {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ana-lang-pct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ---------- Top tags (weighted list) ------------------------- */
+
+.ana-tag-cloud {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ana-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-3);
+  color: var(--ink-2);
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.ana-tag:hover {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line-2));
+  color: var(--ink);
+}
+.ana-tag-name {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: -0.1px;
+  line-height: 1;
+}
+.ana-tag-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* Weight bands — size + emphasis scale with relative tag count. */
+.ana-tag.w-1 .ana-tag-name { font-size: 12px; }
+.ana-tag.w-2 .ana-tag-name { font-size: 13.5px; }
+.ana-tag.w-3 .ana-tag-name { font-size: 15px; color: var(--ink); }
+.ana-tag.w-4 .ana-tag-name {
+  font-size: 17px;
+  color: transparent;
+  background-image: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.ana-tag.w-4 { border-color: color-mix(in oklab, var(--accent) 30%, var(--line-2)); }
+
+/* ---------- Row list (longest / recently analyzed) ----------- */
+
+.ana-row-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ana-row + .ana-row { border-top: 1px solid var(--line); }
+.ana-row-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  color: inherit;
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+.ana-row-link:hover { color: var(--ink); }
+.ana-row-link:hover .ana-row-title { color: var(--accent); }
+.ana-row-index {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+.ana-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.ana-row-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 140ms ease;
+}
+.ana-row-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ana-provider {
+  padding: 1px 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-2);
+  letter-spacing: 0.05em;
+}
+.ana-dot { color: var(--ink-4); }
+.ana-row-figure {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+
+/* ---------- Responsive ----------------------------------------- */
+
+@media (max-width: 960px) {
+  .dash-analytics { padding-left: 18px; padding-right: 18px; }
+}
+@media (max-width: 640px) {
+  .analytics-grid { grid-template-columns: 1fr; }
+  .ana-bar-row {
+    grid-template-columns: minmax(0, 1fr) minmax(80px, 1.2fr) auto auto;
+    gap: 8px;
+    font-size: 12.5px;
+  }
+  .dash-analytics-head h2 { font-size: 22px; }
 }

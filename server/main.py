@@ -553,12 +553,82 @@ def api_stats():
                 "FROM videos WHERE archived = 0 ORDER BY created_at DESC LIMIT 8"
             )
         ]
+
+        # ----- Analytics rollups for the Dashboard ---------------------
+        by_channel = [
+            {
+                "channel": r["channel"],
+                "count": int(r["count"]),
+                "total_seconds": float(r["total_seconds"] or 0),
+            }
+            for r in conn.execute(
+                "SELECT channel, COUNT(*) AS count, "
+                "COALESCE(SUM(duration_sec), 0) AS total_seconds "
+                "FROM videos WHERE archived = 0 AND channel IS NOT NULL "
+                "GROUP BY channel ORDER BY count DESC, total_seconds DESC LIMIT 6"
+            )
+        ]
+
+        by_language = [
+            {"language": r["language"], "count": int(r["count"])}
+            for r in conn.execute(
+                "SELECT language, COUNT(*) AS count "
+                "FROM videos WHERE archived = 0 AND language IS NOT NULL "
+                "GROUP BY language ORDER BY count DESC"
+            )
+        ]
+
+        top_tags = [
+            {"tag": r["tag"], "count": int(r["count"])}
+            for r in conn.execute(
+                "SELECT vt.tag AS tag, COUNT(*) AS count "
+                "FROM video_tags vt JOIN videos v ON v.id = vt.video_id "
+                "WHERE v.archived = 0 "
+                "GROUP BY vt.tag ORDER BY count DESC LIMIT 10"
+            )
+        ]
+
+        longest_videos = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "duration_sec": float(r["duration_sec"] or 0),
+                "channel": r["channel"],
+            }
+            for r in conn.execute(
+                "SELECT id, title, duration_sec, channel "
+                "FROM videos WHERE archived = 0 AND duration_sec IS NOT NULL "
+                "ORDER BY duration_sec DESC LIMIT 5"
+            )
+        ]
+
+        recently_analyzed = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "finished_at": r["finished_at"],
+                "provider": r["provider"],
+            }
+            for r in conn.execute(
+                "SELECT v.id AS id, v.title AS title, "
+                "a.finished_at AS finished_at, a.provider AS provider "
+                "FROM analyses a JOIN videos v ON v.id = a.video_id "
+                "WHERE a.status = 'done' AND v.archived = 0 "
+                "ORDER BY a.finished_at DESC LIMIT 5"
+            )
+        ]
+
         return {
             "video_count": int(video_count),
             "project_count": int(project_count),
             "total_seconds": float(totals[0] or 0),
             "storage_bytes": int(totals[1] or 0),
             "latest_videos": latest,
+            "by_channel": by_channel,
+            "by_language": by_language,
+            "top_tags": top_tags,
+            "longest_videos": longest_videos,
+            "recently_analyzed": recently_analyzed,
         }
     finally:
         conn.close()

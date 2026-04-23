@@ -1,45 +1,78 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import TopBar from "./components/TopBar";
 import ProjectCard from "./components/ProjectCard";
 import StatsStrip from "./components/StatsStrip";
 import NewProjectModal from "./components/NewProjectModal";
-import VideoRow from "./components/VideoRow";
+import TopChannelsCard from "./components/TopChannelsCard";
+import LanguageBreakdownCard from "./components/LanguageBreakdownCard";
+import TopTagsCard from "./components/TopTagsCard";
+import LongestVideosCard from "./components/LongestVideosCard";
+import RecentlyAnalyzedCard from "./components/RecentlyAnalyzedCard";
 import { createProject, getStats, listProjects } from "./projects";
-import type { Project, Stats, TranscriptSummary } from "./types";
+import type { Project, Stats } from "./types";
 
 export interface DashboardProps {
   onMenuToggle?: () => void;
   onAdd: () => void;
 }
 
-/** Adapt a StatsVideo (trimmed shape from /api/stats) into the TranscriptSummary
- *  shape VideoRow expects. Fields not supplied by /api/stats get safe defaults. */
-function statsVideoToSummary(v: Stats["latest_videos"][number]): TranscriptSummary {
-  return {
-    id: v.id,
-    title: v.title ?? v.id,
-    duration_sec: v.duration_sec,
-    language: null,
-    diarized: false,
-    model: null,
-    segment_count: 0,
-    channel: v.channel,
-  };
-}
+/** Stats + projects refresh cadence for the Dashboard. Short enough that
+ *  a fresh ingest's counts show up without a manual reload, long enough
+ *  that it doesn't saturate the connection. */
+const POLL_MS = 3000;
 
 export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const reloadRef = useRef<() => void>(() => {});
 
   const reload = useCallback(() => {
     listProjects().then(setProjects).catch(console.error);
     getStats().then(setStats).catch(console.error);
   }, []);
+  reloadRef.current = reload;
 
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Poll while the tab is visible; pause while hidden to avoid pointless
+  // work. Refresh immediately on tab focus so switching back shows fresh
+  // numbers without waiting for the next tick.
+  useEffect(() => {
+    let timer: number | null = null;
+    const start = () => {
+      if (timer != null) return;
+      timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") reloadRef.current();
+      }, POLL_MS);
+    };
+    const stop = () => {
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        reloadRef.current();
+        start();
+      } else {
+        stop();
+      }
+    };
+    const onFocus = () => reloadRef.current();
+
+    start();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const handleCreate = useCallback(
     async (name: string, description: string) => {
@@ -96,20 +129,23 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
           )}
         </section>
 
-        <section className="dash-latest">
-          <h2>Latest videos</h2>
-          {stats && stats.latest_videos.length > 0 ? (
-            <div className="latest-list">
-              {stats.latest_videos.map((v) => (
-                <VideoRow key={v.id} v={statsVideoToSummary(v)} />
-              ))}
-            </div>
-          ) : (
-            <div className="empty">No videos yet. Paste a URL to get started.</div>
-          )}
-        </section>
-
         {stats && <StatsStrip stats={stats} />}
+
+        {stats && (
+          <section className="dash-analytics">
+            <div className="dash-analytics-head">
+              <span className="dash-analytics-kicker">Readings</span>
+              <h2>What&rsquo;s in your library</h2>
+            </div>
+            <div className="analytics-grid">
+              <TopChannelsCard channels={stats.by_channel} />
+              <LanguageBreakdownCard languages={stats.by_language} />
+              <TopTagsCard tags={stats.top_tags} />
+              <LongestVideosCard videos={stats.longest_videos} />
+              <RecentlyAnalyzedCard items={stats.recently_analyzed} />
+            </div>
+          </section>
+        )}
       </div>
       <NewProjectModal
         open={modalOpen}
