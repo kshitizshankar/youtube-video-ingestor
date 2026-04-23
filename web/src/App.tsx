@@ -16,6 +16,7 @@ import Archive from "./Archive";
 import Dashboard from "./Dashboard";
 import Detail from "./Detail";
 import Library from "./Library";
+import Project from "./Project";
 import type { TranscriptSummary } from "./types";
 
 /** Holds shell state (sidebar count, ingest modal, pending ingest URL). */
@@ -114,6 +115,10 @@ function Shell() {
               onMenuToggle={toggleDrawer}
             />
           }
+        />
+        <Route
+          path="/p/:projectId"
+          element={<Project onMenuToggle={toggleDrawer} />}
         />
         <Route path="/archive" element={<Archive onMenuToggle={toggleDrawer} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
