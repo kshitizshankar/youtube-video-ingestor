@@ -195,3 +195,34 @@ export interface BulkIngestRequest {
   options?: { diarize?: boolean; model?: string; batched?: boolean };
   force?: boolean;
 }
+
+// -------------------------------------------------------------------
+// Slice 3 — AI provider / model picker + live analysis telemetry
+// -------------------------------------------------------------------
+
+export interface AiProvider {
+  /** Registry key, e.g. "claude_cli" / "ollama". */
+  name: string;
+  /** Human label, e.g. "Claude Code CLI". */
+  display_name: string;
+  /** False if the CLI is missing, the daemon is offline, etc. */
+  available: boolean;
+  /** One-line reason surfaced when `available === false`. */
+  reason: string | null;
+  /** Model ids for this provider — shown in the model dropdown. */
+  models: string[];
+}
+
+export interface AnalysisStage {
+  /** Human stage label (e.g. "Running tool: Read"). */
+  stage: string;
+  /** Client-side receive timestamp (Date.now() on arrival). */
+  ts: number;
+}
+
+export interface AnalysisUsage {
+  tokens_in?: number;
+  tokens_out?: number;
+  cached_tokens?: number;
+  cost_usd?: number;
+}

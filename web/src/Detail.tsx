@@ -8,11 +8,13 @@ import {
   getTranscript,
   type IngestState,
   listIngests,
-  openAnalysisStream,
   openTranscribeStream,
   retryIngest,
+  triggerAnalyze,
 } from "./api";
 import { formatCount, formatSpeakers, formatYtDate } from "./format";
+import AnalysisProgress from "./components/AnalysisProgress";
+import AnalyzeTriggerModal from "./components/AnalyzeTriggerModal";
 import ResizeHandle from "./components/ResizeHandle";
 import TopBar from "./components/TopBar";
 import TranscriptPane from "./components/TranscriptPane";
@@ -78,13 +80,21 @@ export default function Detail({
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [regenerating, setRegenerating] = useState(false);
-  const [analysisBusy, setAnalysisBusy] = useState(false);
-  const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
-  const [analysisPhase, setAnalysisPhase] = useState<string>("");
-  const [analysisTokensIn, setAnalysisTokensIn] = useState<number>(0);
-  const [analysisTokensOut, setAnalysisTokensOut] = useState<number>(0);
-  const [analysisCostUsd, setAnalysisCostUsd] = useState<number>(0);
+  // Slice 3 — provider/model picker modal + live progress surface.
+  const [triggerOpen, setTriggerOpen] = useState(false);
+  const [activeRun, setActiveRun] = useState<{
+    /** Monotonically increments each time we kick off a new run — used as
+     *  the React `key` for AnalysisProgress so re-runs fully reset its
+     *  internal SSE subscription state. */
+    runId: number;
+    provider: string;
+    model?: string;
+  } | null>(null);
+  // Remember the last chosen provider/model so the modal preselects it on
+  // the next open — small quality-of-life win for repeat runs.
+  const [lastChosen, setLastChosen] = useState<{ provider: string; model?: string }>(
+    { provider: "claude_cli" },
+  );
 
   const playerRef = useRef<VideoPlayerHandle>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -163,66 +173,66 @@ export default function Detail({
     return () => { cancelled = true; };
   }, [videoId]);
 
-  const handleRegenerateAnalysis = useCallback(() => {
-    if (!videoId) return;
-    setRegenerating(true);
-    setAnalysisBusy(true);
-    setAnalysisStartedAt(Date.now());
-    setAnalysisPhase("Launching Claude");
-    setAnalysisTokensIn(0);
-    setAnalysisTokensOut(0);
-    setAnalysisCostUsd(0);
+  // Slice 3 — opening the modal is the ONLY way to kick off an analysis now.
+  // The actual POST + SSE subscription happens inside AnalysisProgress once
+  // we record an `activeRun`.
+  const handleOpenAnalyzeModal = useCallback(() => {
     setAnalysisError(null);
+    setTriggerOpen(true);
+  }, []);
 
-    const es = openAnalysisStream(videoId);
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      setRegenerating(false);
-      setAnalysisBusy(false);
-      setAnalysisStartedAt(null);
-      setAnalysisPhase("");
-      es.close();
-    };
-
-    const applyUsage = (d: Record<string, unknown>) => {
-      if (typeof d.tokens_in === "number") setAnalysisTokensIn(d.tokens_in);
-      if (typeof d.tokens_out === "number") setAnalysisTokensOut(d.tokens_out);
-      if (typeof d.cost_usd === "number") setAnalysisCostUsd(d.cost_usd);
-    };
-
-    es.addEventListener("progress", (ev) => {
+  const handleAnalyzeSubmit = useCallback(
+    async (provider: string, model: string | undefined) => {
+      if (!videoId) return;
+      setLastChosen({ provider, model });
+      setAnalysisError(null);
       try {
-        const d = JSON.parse((ev as MessageEvent).data);
-        if (d.message) setAnalysisPhase(d.message);
-        applyUsage(d);
-      } catch { /* ignore */ }
-    });
-    es.addEventListener("done", async (ev) => {
-      try {
-        const d = JSON.parse((ev as MessageEvent).data);
-        applyUsage(d);
-      } catch { /* ignore */ }
-      try {
-        const a = await getAnalysis(videoId);
-        setAnalysis(a);
+        // Fire-and-forget: the backend spins up a worker. Progress streams
+        // in via the SSE owned by AnalysisProgress below.
+        await triggerAnalyze(videoId, provider, model);
       } catch (e) {
         setAnalysisError(String(e));
-      } finally {
-        finish();
+        return;
       }
-    });
-    es.addEventListener("error", (ev) => {
-      const me = ev as MessageEvent;
-      let msg = "analysis failed";
-      if (me.data) {
-        try { msg = JSON.parse(me.data).message ?? msg; } catch { /* ignore */ }
+      setActiveRun((prev) => ({
+        runId: (prev?.runId ?? 0) + 1,
+        provider,
+        model,
+      }));
+    },
+    [videoId],
+  );
+
+  const handleAnalysisDone = useCallback(
+    async (result: Analysis) => {
+      if (!videoId) return;
+      // Trust the streamed `result`, but also refetch the persisted analysis
+      // so `_meta` (generated_at / num_turns / etc.) is populated.
+      setAnalysis(result);
+      try {
+        const a = await getAnalysis(videoId);
+        if (a) setAnalysis(a);
+      } catch {
+        /* swallow — the streamed result is already on screen */
       }
-      setAnalysisError(msg);
-      finish();
-    });
-  }, [videoId]);
+      // Keep the "done" one-liner visible for ~4s before tearing down, so
+      // users see a confirmation of cost/tokens before it vanishes.
+      window.setTimeout(() => setActiveRun(null), 4000);
+    },
+    [videoId],
+  );
+
+  const handleAnalysisError = useCallback((msg: string) => {
+    setAnalysisError(msg);
+    // Leave the error state mounted so the "Try again" retry button is
+    // reachable. activeRun clears when the user hits retry.
+  }, []);
+
+  const handleAnalysisRetry = useCallback(() => {
+    setActiveRun(null);
+    setAnalysisError(null);
+    setTriggerOpen(true);
+  }, []);
 
   // Poll /api/ingests so we can surface server-side job state for this video
   // even when no SSE is attached (fresh tab, page refresh, job started in
@@ -588,18 +598,38 @@ export default function Detail({
           analysis={analysis}
           analysisLoading={analysisLoading}
           analysisError={analysisError}
-          onRegenerateAnalysis={handleRegenerateAnalysis}
-          regenerating={regenerating}
-          analysisBusy={analysisBusy}
-          analysisStartedAt={analysisStartedAt}
-          analysisPhase={analysisPhase}
-          analysisTokensIn={analysisTokensIn}
-          analysisTokensOut={analysisTokensOut}
-          analysisCostUsd={analysisCostUsd}
+          onRegenerateAnalysis={handleOpenAnalyzeModal}
+          regenerating={activeRun !== null}
+          analysisBusy={activeRun !== null}
+          analysisStartedAt={null}
+          analysisPhase=""
+          analysisTokensIn={0}
+          analysisTokensOut={0}
+          analysisCostUsd={0}
+          analysisProgressNode={
+            activeRun ? (
+              <AnalysisProgress
+                key={activeRun.runId}
+                videoId={videoId}
+                provider={activeRun.provider}
+                model={activeRun.model}
+                onDone={handleAnalysisDone}
+                onError={handleAnalysisError}
+                onRetry={handleAnalysisRetry}
+              />
+            ) : null
+          }
           transcript={transcript}
           speakerNames={meta?.speaker_names ?? {}}
         />
       </div>
+      <AnalyzeTriggerModal
+        open={triggerOpen}
+        onClose={() => setTriggerOpen(false)}
+        onSubmit={handleAnalyzeSubmit}
+        initialProvider={lastChosen.provider}
+        initialModel={lastChosen.model}
+      />
     </div>
   );
 }

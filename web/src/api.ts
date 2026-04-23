@@ -1,5 +1,5 @@
 import { authFetch, withAuthQuery } from "./auth";
-import type { Analysis, Transcript, TranscriptSummary, VideoMeta } from "./types";
+import type { AiProvider, Analysis, Transcript, TranscriptSummary, VideoMeta } from "./types";
 
 export async function listTranscripts(): Promise<TranscriptSummary[]> {
   const r = await authFetch("/api/transcripts");
@@ -37,20 +37,56 @@ export async function getAnalysis(id: string): Promise<Analysis | null> {
   return r.json();
 }
 
-/** Manually re-run the Claude analysis pipeline for a video. Long-running.
- *  Prefer `openAnalysisStream` for UI feedback — this just blocks until done. */
-export async function triggerAnalyze(id: string): Promise<void> {
-  const r = await authFetch(`/api/transcripts/${id}/analyze`, { method: "POST" });
-  if (!r.ok) {
-    const body = await r.text().catch(() => "");
-    throw new Error(`analyze ${id} failed: ${r.status} ${body}`);
-  }
+/** Enumerate available AI analysis providers and their models. */
+export async function listAiProviders(): Promise<AiProvider[]> {
+  const r = await authFetch("/api/ai/providers");
+  if (!r.ok) throw new Error(`listAiProviders: ${r.status}`);
+  return r.json();
 }
 
-/** Open an SSE stream that emits `progress`, `done`, `error` events while
- *  Claude analyzes the transcript. Caller must .close() it. */
-export function openAnalysisStream(id: string): EventSource {
-  return new EventSource(withAuthQuery(`/api/transcripts/${id}/analyze/stream`));
+/** Kick off analysis for a given video. Fire-and-forget — watch
+ *  `openAnalysisStream` for live progress. 400 if provider is unavailable. */
+export async function triggerAnalyze(
+  id: string,
+  provider: string = "claude_cli",
+  model?: string,
+): Promise<{ started: boolean; provider: string; model: string | null }> {
+  const r = await authFetch(`/api/transcripts/${id}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, model: model ?? null }),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    try {
+      const parsed = JSON.parse(body);
+      throw new Error(parsed.detail || `triggerAnalyze: ${r.status}`);
+    } catch (e) {
+      if (e instanceof Error && e.message && !e.message.startsWith("Unexpected")) throw e;
+      throw new Error(`triggerAnalyze: ${r.status}`);
+    }
+  }
+  return r.json();
+}
+
+/** Ask the server to stop a running analysis. 404 = nothing in flight. */
+export async function cancelAnalysis(analysisId: number): Promise<void> {
+  const r = await authFetch(`/api/analyses/${analysisId}/cancel`, { method: "POST" });
+  if (!r.ok && r.status !== 404) throw new Error(`cancelAnalysis: ${r.status}`);
+}
+
+/** Open an SSE stream that emits `stage`, `usage`, `done`, `error` events
+ *  while the chosen provider analyzes the transcript. Caller must .close() it. */
+export function openAnalysisStream(
+  id: string,
+  provider: string = "claude_cli",
+  model?: string,
+): EventSource {
+  const params = new URLSearchParams({ provider });
+  if (model) params.set("model", model);
+  return new EventSource(
+    withAuthQuery(`/api/transcripts/${id}/analyze/stream?${params.toString()}`),
+  );
 }
 
 export interface TranscribeOptions {

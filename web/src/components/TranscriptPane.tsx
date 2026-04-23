@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Analysis, Segment, Transcript } from "../types";
 import AnalysisStatus from "./AnalysisStatus";
 import ChaptersView from "./ChaptersView";
@@ -36,6 +36,10 @@ export interface TranscriptPaneProps {
   analysisTokensIn?: number;
   analysisTokensOut?: number;
   analysisCostUsd?: number;
+  /** Slice 3 — when set, this node replaces the legacy AnalysisStatus pill
+   *  and also takes over the summary-tab body while no analysis is resolved.
+   *  Typically `<AnalysisProgress />`. */
+  analysisProgressNode?: ReactNode;
   /** Map of SPEAKER_XX → user-chosen name, applied everywhere speakers show. */
   speakerNames?: Record<string, string>;
 }
@@ -76,6 +80,7 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
     analysis, analysisLoading, analysisError, onRegenerateAnalysis, regenerating,
     analysisBusy = false, analysisStartedAt = null, analysisPhase = "",
     analysisTokensIn = 0, analysisTokensOut = 0, analysisCostUsd = 0,
+    analysisProgressNode,
     transcript = null,
     speakerNames = {},
   } = props;
@@ -154,15 +159,17 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
           lastSegmentEnd={lastSegEnd}
           duration={duration}
         />
-        <AnalysisStatus
-          running={analysisBusy}
-          startedAt={analysisStartedAt}
-          phase={analysisPhase}
-          error={analysisError}
-          tokensIn={analysisTokensIn}
-          tokensOut={analysisTokensOut}
-          costUsd={analysisCostUsd}
-        />
+        {analysisProgressNode ?? (
+          <AnalysisStatus
+            running={analysisBusy}
+            startedAt={analysisStartedAt}
+            phase={analysisPhase}
+            error={analysisError}
+            tokensIn={analysisTokensIn}
+            tokensOut={analysisTokensOut}
+            costUsd={analysisCostUsd}
+          />
+        )}
       </div>
 
       {tab === "transcript" && (
@@ -194,13 +201,17 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
 
       {tab === "summary" && (
         <div className="transcript-body">
-          <SummaryView
-            analysis={analysis}
-            loading={analysisLoading}
-            error={analysisError}
-            onRegenerate={onRegenerateAnalysis}
-            regenerating={regenerating}
-          />
+          {analysisProgressNode && !analysis ? (
+            <div className="analysis-progress-wrap">{analysisProgressNode}</div>
+          ) : (
+            <SummaryView
+              analysis={analysis}
+              loading={analysisLoading}
+              error={analysisError}
+              onRegenerate={onRegenerateAnalysis}
+              regenerating={regenerating}
+            />
+          )}
         </div>
       )}
 
