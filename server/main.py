@@ -455,6 +455,48 @@ def api_remove_project_video(project_id: str, video_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Dashboard rollups
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/stats", dependencies=[Depends(auth.require_http)])
+def api_stats():
+    conn = open_connection(OUTPUT_DIR / "app.db")
+    try:
+        run_migrations(conn)
+        video_count = conn.execute(
+            "SELECT COUNT(*) FROM videos WHERE archived = 0"
+        ).fetchone()[0]
+        totals = conn.execute(
+            "SELECT COALESCE(SUM(duration_sec),0), COALESCE(SUM(storage_bytes),0) "
+            "FROM videos WHERE archived = 0"
+        ).fetchone()
+        project_count = conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+        latest = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "duration_sec": r["duration_sec"],
+                "channel": r["channel"],
+                "created_at": r["created_at"],
+            }
+            for r in conn.execute(
+                "SELECT id, title, duration_sec, channel, created_at "
+                "FROM videos WHERE archived = 0 ORDER BY created_at DESC LIMIT 8"
+            )
+        ]
+        return {
+            "video_count": int(video_count),
+            "project_count": int(project_count),
+            "total_seconds": float(totals[0] or 0),
+            "storage_bytes": int(totals[1] or 0),
+            "latest_videos": latest,
+        }
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # API: SSE transcription stream
 # ---------------------------------------------------------------------------
 
