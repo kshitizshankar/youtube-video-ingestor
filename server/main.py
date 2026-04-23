@@ -669,7 +669,7 @@ def api_bulk_ingest(body: dict = Body(...)):
             track_id = vid or f"pending-{url[-11:]}"
             state.begin(track_id, url=url)
             state.update(track_id, phase="queued")
-            queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token)
+            queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token, project_id=project_id)
             kicked.append(vid or url)
         return {"job_ids": kicked, "skipped": skipped, "project_id": project_id}
     finally:

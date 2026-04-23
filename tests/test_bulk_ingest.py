@@ -19,7 +19,7 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
 def test_bulk_ingest_by_urls(client, monkeypatch, tmp_path):
     called_with = []
 
-    def fake_enqueue(req, out_dir, hf_token=None):
+    def fake_enqueue(req, out_dir, hf_token=None, project_id=None):
         called_with.append(req.url)
 
     import server.queue
@@ -91,7 +91,7 @@ def test_archived_video_rejected(client, tmp_path):
 def test_playlist_url_expanded(client, monkeypatch):
     called_with = []
 
-    def fake_enqueue(req, out_dir, hf_token=None):
+    def fake_enqueue(req, out_dir, hf_token=None, project_id=None):
         called_with.append(req.url)
 
     import server.queue

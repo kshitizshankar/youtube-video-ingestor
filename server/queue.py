@@ -67,6 +67,7 @@ def _transcribe_task(
     req: TranscribeRequest,
     out_dir: Path,
     hf_token: str | None,
+    project_id: str | None = None,
 ) -> None:
     """GPU-bound stage. Runs Whisper + diarize + write outputs + persist.
 
@@ -128,6 +129,20 @@ def _transcribe_task(
         )
         persist_video_to_db(out_dir, video_id, info, result, req)
 
+        # Attach to the submitting project (if any). The bulk endpoint can't
+        # do this at enqueue time because the videos row doesn't exist yet.
+        if project_id:
+            try:
+                from . import projects as projects_mod
+                added = projects_mod.add_videos(out_dir, project_id, [video_id])
+                if added < 0:
+                    log.warning(
+                        "project %s no longer exists — skipping membership for %s",
+                        project_id, video_id,
+                    )
+            except Exception:
+                log.exception("failed to add %s to project %s", video_id, project_id)
+
         state.update(video_id, phase="done")
         state.finish(video_id)
     except _CancelledMidRun:
@@ -145,6 +160,7 @@ def _download_task(
     out_dir: Path,
     hf_token: str | None,
     preliminary_id: str,
+    project_id: str | None = None,
 ) -> None:
     """I/O-bound stage. Downloads audio, rekeys state if yt-dlp resolves a
     different canonical id than our regex guess, then hands the job off to
@@ -181,15 +197,24 @@ def _download_task(
             return
 
         _transcribe_executor.submit(
-            _transcribe_task, video_id, audio_path, info, req, out_dir, hf_token,
+            _transcribe_task, video_id, audio_path, info, req, out_dir, hf_token, project_id,
         )
     except Exception as e:
         log.exception("download task failed for %s", video_id)
         state.finish(video_id, error=f"{type(e).__name__}: {e}")
 
 
-def enqueue_ingest(req: TranscribeRequest, out_dir: Path, hf_token: str | None) -> None:
+def enqueue_ingest(
+    req: TranscribeRequest,
+    out_dir: Path,
+    hf_token: str | None,
+    project_id: str | None = None,
+) -> None:
     """Schedule a fresh ingest. Returns immediately.
+
+    If `project_id` is given, the video is added to that project after
+    transcription completes (not at enqueue time — the videos row doesn't
+    exist until persist_video_to_db lands).
 
     The bulk endpoint (`api_bulk_ingest`) pre-seeds a `queued` state record
     before calling us so the job appears in /api/ingests before the download
@@ -212,7 +237,9 @@ def enqueue_ingest(req: TranscribeRequest, out_dir: Path, hf_token: str | None) 
         state.begin(preliminary_id, url=req.url)
         state.update(preliminary_id, phase="queued")
 
-    _download_executor.submit(_download_task, req, out_dir, hf_token, preliminary_id)
+    _download_executor.submit(
+        _download_task, req, out_dir, hf_token, preliminary_id, project_id,
+    )
 
 
 def mark_queued_orphans() -> int:
