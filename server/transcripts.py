@@ -1,132 +1,124 @@
-"""List and read previously-generated transcript JSONs from per-video folders.
+"""Videos repository. Canonical source is the `videos` table; segment-level
+data (too big for a row) stays on disk in output/<id>/transcript.json.
 
-Archive model: each transcript.json carries an optional `archived: true`
-flag. `list_transcripts` filters it out by default; `list_archived` returns
-only the hidden ones. `set_archived` flips the flag; `delete_video` is
-permanent and only meant to be called after soft-archiving.
+Public function signatures match the pre-Slice-1 shapes so routers don't
+change, but internals are now DB-backed. The optional `conn` kwarg is for
+tests; production callers pass the live DB connection via the server.
 """
-
 from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .layout import transcript_json, video_dir
+from .layout import video_dir, transcript_json
 
 
-def _summary(json_path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    # Attempt to read sibling meta.json for user-editable fields (tags, etc.)
-    tags: list[str] = []
-    meta_p = json_path.parent / "meta.json"
-    if meta_p.exists():
-        try:
-            m = json.loads(meta_p.read_text(encoding="utf-8"))
-            if isinstance(m.get("tags"), list):
-                tags = [str(t) for t in m["tags"] if str(t).strip()]
-        except Exception:
-            pass
-    # Fall back to computing speaker_count from segments if not explicit.
-    sp_count = data.get("speaker_count")
-    if sp_count is None:
-        unique = {
-            s.get("speaker") for s in (data.get("segments") or []) if s.get("speaker")
-        }
-        sp_count = len(unique)
-    return {
-        "id": data.get("id") or json_path.parent.name,
-        "title": data.get("title") or json_path.parent.name,
-        "duration_sec": data.get("duration_sec"),
-        "language": data.get("language"),
-        "diarized": data.get("diarized", False),
-        "speaker_count": sp_count,
-        "model": data.get("model"),
-        "segment_count": len(data.get("segments", [])),
-        "archived": bool(data.get("archived", False)),
-        "tags": tags,
-        "channel": data.get("channel"),
-        "channel_url": data.get("channel_url"),
-        "upload_date": data.get("upload_date"),
-        "view_count": data.get("view_count"),
-        "like_count": data.get("like_count"),
-    }
+def _ensure_conn(conn, out_dir: Path):
+    if conn is not None:
+        return conn, False
+    from .db import open_connection
+    return open_connection(out_dir / "app.db"), True
 
 
-def _scan(out_dir: Path) -> list[dict[str, Any]]:
-    """Ordered scan of every transcript.json, most-recent first."""
-    if not out_dir.exists():
-        return []
-    candidates: list[tuple[float, Path]] = []
-    for sub in out_dir.iterdir():
-        if not sub.is_dir():
-            continue
-        j = sub / "transcript.json"
-        if not j.exists():
-            continue
-        try:
-            mtime = j.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((mtime, j))
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    out: list[dict[str, Any]] = []
-    for _, j in candidates:
-        s = _summary(j)
-        if s is not None:
-            out.append(s)
+def _close_if_owned(conn, owned: bool) -> None:
+    if owned:
+        conn.close()
+
+
+_SUMMARY_COLS = [
+    "id", "title", "duration_sec", "language", "diarized",
+    "speaker_count", "model", "segment_count",
+    "archived", "channel", "channel_url", "upload_date",
+    "view_count", "like_count",
+]
+
+
+def _summary_from_row(conn, row) -> dict:
+    out = {k: row[k] for k in _SUMMARY_COLS}
+    out["archived"] = bool(out["archived"])
+    out["diarized"] = bool(out["diarized"])
+    out["tags"] = [
+        r["tag"] for r in conn.execute(
+            "SELECT tag FROM video_tags WHERE video_id=? ORDER BY tag",
+            (row["id"],),
+        )
+    ]
     return out
 
 
-def list_transcripts(out_dir: Path) -> list[dict[str, Any]]:
-    """Live (non-archived) videos."""
-    return [s for s in _scan(out_dir) if not s["archived"]]
+def _list_by_archived(conn, archived: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM videos WHERE archived=? ORDER BY created_at DESC",
+        (archived,),
+    ).fetchall()
+    return [_summary_from_row(conn, r) for r in rows]
 
 
-def list_archived(out_dir: Path) -> list[dict[str, Any]]:
-    """Soft-deleted videos. Still on disk, hidden from the main library."""
-    return [s for s in _scan(out_dir) if s["archived"]]
-
-
-def read_transcript(out_dir: Path, video_id: str) -> dict[str, Any] | None:
-    p = transcript_json(out_dir, video_id)
-    if not p.exists():
-        return None
+def list_transcripts(out_dir: Path, conn=None) -> list[dict]:
+    c, owned = _ensure_conn(conn, out_dir)
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+        return _list_by_archived(c, 0)
+    finally:
+        _close_if_owned(c, owned)
 
 
-def set_archived(out_dir: Path, video_id: str, archived: bool) -> bool:
-    """Flip the `archived` flag on this video's transcript.json. Returns
-    False if the video doesn't exist."""
-    p = transcript_json(out_dir, video_id)
-    if not p.exists():
-        return False
+def list_archived(out_dir: Path, conn=None) -> list[dict]:
+    c, owned = _ensure_conn(conn, out_dir)
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return False
-    data["archived"] = bool(archived)
-    p.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return True
+        return _list_by_archived(c, 1)
+    finally:
+        _close_if_owned(c, owned)
 
 
-def delete_video(out_dir: Path, video_id: str) -> bool:
-    """PERMANENTLY delete output/<video_id>/ — all files, audio, analysis.
+def read_transcript(out_dir: Path, video_id: str, conn=None) -> dict | None:
+    """Read canonical transcript.json from disk; layer DB row on top for
+    any DB-only fields. Returns None when unknown everywhere."""
+    p = transcript_json(out_dir, video_id)
+    disk = None
+    if p.exists():
+        try:
+            disk = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            disk = None
+    c, owned = _ensure_conn(conn, out_dir)
+    try:
+        row = c.execute("SELECT * FROM videos WHERE id=?", (video_id,)).fetchone()
+        if row is None and disk is None:
+            return None
+        base = dict(row) if row else {}
+        if disk:
+            base.update({k: v for k, v in disk.items() if k != "archived"})
+            if row is not None:
+                base["archived"] = bool(row["archived"])
+        return base
+    finally:
+        _close_if_owned(c, owned)
 
-    Callers must have already confirmed via the archive step. Returns False
-    if the folder doesn't exist."""
+
+def set_archived(out_dir: Path, video_id: str, archived: bool, conn=None) -> bool:
+    c, owned = _ensure_conn(conn, out_dir)
+    try:
+        cur = c.execute(
+            "UPDATE videos SET archived=?, updated_at=datetime('now') WHERE id=?",
+            (1 if archived else 0, video_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        _close_if_owned(c, owned)
+
+
+def delete_video(out_dir: Path, video_id: str, conn=None) -> bool:
+    c, owned = _ensure_conn(conn, out_dir)
+    try:
+        cur = c.execute("DELETE FROM videos WHERE id=?", (video_id,))
+        if cur.rowcount == 0:
+            return False
+    finally:
+        _close_if_owned(c, owned)
     vd = video_dir(out_dir, video_id)
-    if not vd.exists():
-        return False
-    shutil.rmtree(vd, ignore_errors=False)
+    if vd.exists():
+        shutil.rmtree(vd, ignore_errors=False)
     return True
