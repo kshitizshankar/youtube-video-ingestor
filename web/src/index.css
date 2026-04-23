@@ -2682,3 +2682,590 @@ textarea:focus-visible,
   .transcript-header .title { font-size: 22px; }
   .transcript-header .kicker { font-size: 9px; letter-spacing: 0.22em; }
 }
+
+/* ==============================================================
+   Slice 1 — Dashboard, Projects, Stats
+   ============================================================== */
+
+/* ----- Dashboard shell + hero ------------------------------- */
+
+.dashboard { min-width: 0; }
+.dash-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 48px;
+}
+
+.dash-hero {
+  padding: 32px 28px 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+  position: relative;
+}
+/* A soft nebula strip behind the hero — picks up the page's existing
+   gradient vocabulary without drowning the content. */
+.dash-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100%;
+  background-image: var(--gradient-soft);
+  opacity: 0.5;
+  mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 85%);
+  pointer-events: none;
+  z-index: 0;
+}
+.dash-hero > * { position: relative; z-index: 1; }
+.dash-hero h1 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.6px;
+  color: var(--ink);
+}
+.dash-hero h1::first-letter { /* no-op, kept for future tweaks */ }
+/* Decorative gradient underline cue on the hero heading. */
+.dash-hero h1 {
+  display: inline-block;
+  padding-bottom: 10px;
+  background-image: var(--gradient);
+  background-repeat: no-repeat;
+  background-size: 52px 2px;
+  background-position: 0 100%;
+}
+
+.dash-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dash-hero-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+.dash-hero-actions button:hover {
+  background: var(--bg-3);
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--line-2));
+}
+.dash-hero-actions button.primary {
+  background-image: var(--gradient);
+  background-color: transparent;
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 8px 20px rgba(139, 92, 246, 0.35);
+}
+.dash-hero-actions button.primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 10px 30px rgba(255, 79, 180, 0.45);
+}
+
+/* ----- Project grid + cards --------------------------------- */
+
+.dash-projects { padding: 10px 28px 8px; }
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 160ms ease,
+    box-shadow 180ms ease,
+    background 160ms ease;
+  position: relative;
+  overflow: hidden;
+}
+/* Top-edge gradient accent that reveals on hover — a whisper, not a shout. */
+.project-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background-image: var(--gradient);
+  transform: scaleX(0);
+  transform-origin: 0 0;
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.project-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--line-2));
+  box-shadow: var(--shadow-md);
+  background: var(--bg-2);
+}
+.project-card:hover::before { transform: scaleX(1); }
+
+.project-card-name {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.2px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.project-card-desc {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.project-card-meta {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+}
+.project-card-meta span:nth-child(2) { color: var(--ink-4); }
+
+/* ----- Dashboard: latest videos section --------------------- */
+
+.dash-latest { padding: 18px 28px 8px; }
+.dash-latest h2 {
+  margin: 0 0 6px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+}
+.latest-list {
+  border-top: 1px solid var(--line);
+}
+/* Pull VideoRows flush inside the dashboard container — they supply their
+   own padding via .row. */
+.latest-list .row:last-child { border-bottom: none; }
+
+/* ----- Dashboard sections: generic headings + empty --------- */
+
+.dash-projects + .dash-latest { margin-top: 6px; }
+.dashboard .empty {
+  padding: 28px 18px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink-3);
+  background: var(--bg-2);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+}
+
+/* ----- StatsStrip ------------------------------------------- */
+
+/* The container is scoped so our .stat/.stat-num/.stat-lbl rules do not
+   collide with the library-hero .stat / .stat .n / .stat .l vocabulary. */
+.stats-strip {
+  margin: 22px 28px 0;
+  padding: 14px 6px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.stats-strip .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 14px;
+  text-align: center;
+  position: relative;
+}
+.stats-strip .stat + .stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 1px;
+  background: var(--line);
+}
+.stats-strip .stat-num {
+  font-family: var(--font-serif);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.stats-strip .stat-lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+/* ----- Project detail page ---------------------------------- */
+
+.project-page { min-width: 0; }
+.project-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 28px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.project-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.project-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 42px;
+  line-height: 1.05;
+  letter-spacing: -0.8px;
+  color: var(--ink);
+  cursor: text;
+  position: relative;
+  display: inline-block;
+  padding-bottom: 2px;
+  max-width: max-content;
+  transition: color 140ms ease;
+}
+/* Pencil/underline cue: a gradient rule slides in on hover, hinting that
+   the heading is editable. */
+.project-title::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  background-image: var(--gradient);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  border-radius: 2px;
+}
+.project-title:hover::after { transform: scaleX(0.4); }
+
+.project-name-input {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 42px;
+  line-height: 1.05;
+  letter-spacing: -0.8px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid var(--accent);
+  padding: 0 2px 2px;
+  outline: none;
+  caret-color: var(--accent);
+  width: 100%;
+  max-width: 720px;
+}
+
+.project-desc {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 680px;
+}
+
+.project-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The Project page uses .btn from the global vocabulary — its
+   .btn-destructive / :disabled treatment already covers our needs. */
+
+/* ----- Project videos list ---------------------------------- */
+
+.project-videos {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+.project-videos .empty {
+  padding: 44px 18px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink-3);
+}
+
+/* VideoRow + a per-row "Remove from project" button. The VideoRow
+   component supplies its own .row padding; we stack the remove button
+   on the right and tie it to row hover the same way .row-action does. */
+.project-video-row {
+  position: relative;
+  display: block;
+}
+.project-video-row .row { padding-right: 120px; }
+.project-row-remove {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: auto;
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.project-video-row:hover .project-row-remove { opacity: 1; }
+.project-row-remove:hover {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line-2));
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+/* ----- NewProjectModal -------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 5, 20, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 120;
+  animation: backdrop-in 160ms ease both;
+}
+.modal {
+  width: 460px;
+  max-width: calc(100vw - 24px);
+  padding: 24px 24px 18px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: confirm-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+}
+.modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.modal label .hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-left: 4px;
+}
+.modal input,
+.modal textarea {
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  color: var(--ink);
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.modal textarea {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 72px;
+}
+.modal input:focus,
+.modal textarea:focus {
+  border-color: var(--accent);
+  background: var(--bg);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.modal .form-error {
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 25%, var(--line));
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 14px;
+}
+.modal-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+.modal-actions button:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--line-2));
+}
+.modal-actions button[type="submit"] {
+  background-image: var(--gradient);
+  background-color: transparent;
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 8px 20px rgba(139, 92, 246, 0.35);
+}
+.modal-actions button[type="submit"]:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow: 0 10px 30px rgba(255, 79, 180, 0.45);
+}
+.modal-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+  box-shadow: none;
+}
+
+/* ----- Slice 1: responsive tweaks --------------------------- */
+
+@media (max-width: 960px) {
+  .dash-hero {
+    grid-template-columns: 1fr;
+    padding: 22px 18px 16px;
+    align-items: start;
+    gap: 14px;
+  }
+  .dash-hero-actions { justify-content: flex-start; }
+  .dash-projects,
+  .dash-latest { padding-left: 18px; padding-right: 18px; }
+  .stats-strip { margin: 18px 18px 0; }
+  .project-body { padding: 22px 18px 40px; }
+  .project-title,
+  .project-name-input { font-size: 34px; }
+  .project-video-row .row { padding-right: 96px; }
+}
+
+@media (max-width: 640px) {
+  .dash-hero h1 { font-size: 24px; }
+  .project-title,
+  .project-name-input { font-size: 28px; letter-spacing: -0.4px; }
+  .project-desc { font-size: 15px; }
+  .stats-strip {
+    grid-template-columns: repeat(2, 1fr);
+    row-gap: 14px;
+  }
+  .stats-strip .stat + .stat:nth-child(3)::before { display: none; }
+  .stats-strip .stat-num { font-size: 24px; }
+  .project-grid { grid-template-columns: 1fr; }
+  .modal { padding: 20px 18px 14px; }
+  .modal h2 { font-size: 22px; }
+  /* On narrow viewports, reveal the remove button always so touch users
+     can reach it. */
+  .project-row-remove { opacity: 1; }
+}
