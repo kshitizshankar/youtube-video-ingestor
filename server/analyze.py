@@ -1,21 +1,26 @@
-"""Post-transcribe analysis: runs `claude -p` inside a video's folder to
-extract a summary, key takeaways, chapters, and highlights.
+"""Post-transcribe analysis: dispatches through the AnalysisProvider
+registry. Provider is user-selected at trigger time (no auto-run).
 
-Exposes a generator-style API (`stream_analyze_video`) that yields live
-progress events parsed from claude's `--output-format=stream-json --verbose`
-stream. The legacy `analyze_video` is a thin sync wrapper that drains the
-generator and returns the final path.
+Each analysis run:
+1. Inserts an `analyses` row (status='running').
+2. Streams normalized events from the provider to the caller.
+3. On done: writes parsed JSON to output/<video_id>/analyses/<id>.json and
+   updates the row with finished_at/cost/tokens/file_path.
+4. On error/cancel: updates the row with the outcome.
 """
-
 from __future__ import annotations
 
 import json
 import logging
-import shutil
-import subprocess
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
 from typing import Any, Iterator
+
+from . import ai as ai_registry
+from .ai.events import AnalysisEvent
+from .db import open_connection, run_migrations
 
 
 log = logging.getLogger(__name__)
@@ -57,76 +62,63 @@ Rules:
 
 
 # ---------------------------------------------------------------------------
-# Parsing helpers
+# Cancel registry — module-level so a separate HTTP endpoint can signal
+# a running analysis by id. Restart loses in-flight handles, which is fine.
 # ---------------------------------------------------------------------------
 
 
-def _extract_json(text: str) -> dict[str, Any] | None:
-    first = text.find("{")
-    last = text.rfind("}")
-    if first < 0 or last < 0 or last <= first:
-        return None
+_CANCELS: dict[int, Event] = {}
+
+
+def cancel_analysis(analysis_id: int) -> bool:
+    ev = _CANCELS.get(analysis_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_result_file(
+    out_dir: Path, video_id: str, analysis_id: int, parsed: dict
+) -> str:
+    """Persist parsed analysis to output/<video>/analyses/<id>.json and
+    swap output/<video>/analysis.json to point at it (symlink with plain-copy
+    fallback for Windows-without-permission). Returns the relative path."""
+    folder = out_dir / video_id
+    analyses_dir = folder / "analyses"
+    analyses_dir.mkdir(exist_ok=True)
+    target = analyses_dir / f"{analysis_id}.json"
+    parsed.setdefault("_meta", {})
+    target.write_text(json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Best-effort symlink swap at output/<video>/analysis.json for legacy consumers.
+    link = folder / "analysis.json"
+    tmp = link.with_name(link.name + ".link.tmp")
     try:
-        return json.loads(text[first : last + 1])
-    except json.JSONDecodeError:
-        return None
+        if tmp.exists() or tmp.is_symlink():
+            tmp.unlink()
+        os.symlink(target.name, tmp, target_is_directory=False)
+        os.replace(tmp, link)
+    except (OSError, NotImplementedError) as e:
+        log.info("symlink swap unavailable (%s); falling back to plain copy", e)
+        try:
+            if tmp.exists() or tmp.is_symlink():
+                tmp.unlink()
+        except OSError:
+            pass
+        try:
+            # Plain copy so the legacy endpoint still finds analysis.json.
+            link.write_text(
+                json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError as e2:
+            log.warning("could not update analysis.json: %s", e2)
 
-
-def _shorten(s: str, n: int = 60) -> str:
-    s = " ".join(s.split())
-    return s if len(s) <= n else s[: n - 1] + "…"
-
-
-def _tool_use_label(block: dict[str, Any]) -> str:
-    name = block.get("name", "")
-    inp = block.get("input") or {}
-    if name == "Read":
-        fp = inp.get("file_path") or inp.get("filePath") or ""
-        return f"Reading {Path(fp).name}" if fp else "Reading file"
-    if name == "Write":
-        fp = inp.get("file_path") or ""
-        return f"Writing {Path(fp).name}" if fp else "Writing file"
-    if name == "Edit":
-        fp = inp.get("file_path") or ""
-        return f"Editing {Path(fp).name}" if fp else "Editing file"
-    if name == "Bash":
-        cmd = inp.get("command") or ""
-        return f"Running: {_shorten(cmd)}" if cmd else "Running command"
-    if name == "Grep":
-        p = inp.get("pattern") or ""
-        return f"Searching: {_shorten(p, 40)}"
-    if name == "Glob":
-        p = inp.get("pattern") or ""
-        return f"Finding: {_shorten(p, 40)}"
-    if name == "TodoWrite":
-        return "Planning steps"
-    return f"Using {name}"
-
-
-def _event_label(evt: dict[str, Any]) -> str | None:
-    t = evt.get("type")
-    if t == "system" and evt.get("subtype") == "init":
-        return "Starting Claude session"
-    if t == "assistant":
-        msg = evt.get("message") or {}
-        for block in msg.get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                return _tool_use_label(block)
-        for block in msg.get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text = (block.get("text") or "").strip()
-                if text:
-                    # Don't leak internal chain-of-thought; just acknowledge.
-                    return "Composing answer"
-        return None
-    if t == "user":
-        # Tool result returning to the model — noisy, skip.
-        return None
-    if t == "result":
-        if evt.get("is_error"):
-            return "Claude returned an error"
-        return "Finalizing"
-    return None
+    return f"analyses/{analysis_id}.json"
 
 
 # ---------------------------------------------------------------------------
@@ -134,182 +126,187 @@ def _event_label(evt: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _accumulate_usage(tot: dict[str, int], usage: dict[str, Any]) -> None:
-    for k in ("input_tokens", "output_tokens",
-              "cache_creation_input_tokens", "cache_read_input_tokens"):
-        v = usage.get(k)
-        if isinstance(v, (int, float)):
-            tot[k] = tot.get(k, 0) + int(v)
-
-
-def stream_analyze_video(out_dir: Path, video_id: str) -> Iterator[dict[str, Any]]:
-    """Run claude with stream-json output and yield progress events.
-
-    Emitted event shapes:
-      progress: { type, message, raw_type, tokens_in, tokens_out, cache_read, cost_usd }
-      done:     { type, path, duration_ms, duration_api_ms, tokens_in, tokens_out,
-                  cache_read, cache_creation, cost_usd, num_turns }
-      error:    { type, message }
-    """
-    video_folder = out_dir / video_id
-    if not (video_folder / "transcript.json").exists():
-        yield {"type": "error", "message": f"no transcript.json in {video_folder}"}
+def stream_analyze_video(
+    out_dir: Path,
+    video_id: str,
+    *,
+    provider_name: str = "claude_cli",
+    model: str | None = None,
+) -> Iterator[AnalysisEvent]:
+    """Run analysis for `video_id` using the named provider, yielding
+    normalized AnalysisEvent dicts. The outbound events are annotated with
+    `analysis_id` so callers can correlate cancel requests."""
+    folder = out_dir / video_id
+    if not (folder / "transcript.json").exists():
+        yield {"type": "error", "error_message": f"no transcript.json in {folder}"}
         return
 
-    claude = shutil.which("claude")
-    if not claude:
-        yield {"type": "error", "message": "claude CLI not found in PATH"}
+    provider = ai_registry.get_provider(provider_name)
+    if provider is None:
+        yield {
+            "type": "error",
+            "error_message": f"unknown provider: {provider_name}",
+        }
+        return
+    ok, reason = provider.available()
+    if not ok:
+        yield {
+            "type": "error",
+            "error_message": f"provider unavailable: {reason}",
+        }
         return
 
-    cmd = [
-        claude,
-        "-p", ANALYZE_PROMPT,
-        "--output-format=stream-json",
-        "--verbose",
-    ]
+    # Open DB + insert the running row up front so a cancel endpoint can find it.
+    conn = open_connection(out_dir / "app.db")
+    try:
+        run_migrations(conn)
+        # The analyses row FKs to videos(id); tests may pre-insert a row, but
+        # the legacy path might not — skip silently if the FK fails and fall
+        # back to a synthetic pseudo-id so the stream still works.
+        started_at = _iso_now()
+        try:
+            cur = conn.execute(
+                "INSERT INTO analyses (video_id, provider, model, status, started_at) "
+                "VALUES (?, ?, ?, 'running', ?)",
+                (video_id, provider_name, model, started_at),
+            )
+            analysis_id: int = int(cur.lastrowid)
+        except Exception as e:
+            yield {
+                "type": "error",
+                "error_message": f"could not record analysis run: {e}",
+            }
+            return
+    finally:
+        conn.close()
 
-    usage_running: dict[str, int] = {}
-    cost_running: float = 0.0
+    cancel_event = Event()
+    _CANCELS[analysis_id] = cancel_event
 
-    def _with_usage(e: dict[str, Any]) -> dict[str, Any]:
-        e.setdefault("tokens_in", usage_running.get("input_tokens", 0))
-        e.setdefault("tokens_out", usage_running.get("output_tokens", 0))
-        e.setdefault("cache_read", usage_running.get("cache_read_input_tokens", 0))
-        e.setdefault("cache_creation", usage_running.get("cache_creation_input_tokens", 0))
-        e.setdefault("cost_usd", cost_running)
-        return e
-
-    yield _with_usage({"type": "progress", "message": "Launching Claude…", "raw_type": "launch"})
+    last_usage: dict[str, Any] = {}
+    final_result: dict[str, Any] | None = None
+    error_message: str | None = None
+    cancelled = False
 
     try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(video_folder),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,  # line-buffered
-        )
-    except OSError as e:
-        yield {"type": "error", "message": f"failed to launch claude: {e}"}
-        return
+        for evt in provider.stream_analyze(
+            video_folder=folder,
+            prompt=ANALYZE_PROMPT,
+            model=model,
+            cancel_event=cancel_event,
+        ):
+            if cancel_event.is_set():
+                cancelled = True
+                break
+            t = evt.get("type")
+            if t == "usage":
+                for k in ("tokens_in", "tokens_out", "cost_usd", "cached_tokens"):
+                    if k in evt:
+                        last_usage[k] = evt[k]
+            elif t == "done":
+                final_result = evt.get("result")
+                for k in ("tokens_in", "tokens_out", "cost_usd", "duration_ms"):
+                    if k in evt:
+                        last_usage[k] = evt[k]
+            elif t == "error":
+                error_message = evt.get("error_message") or "unknown error"
 
-    final_result_text: str | None = None
-    duration_ms: int | None = None
-    duration_api_ms: int | None = None
-    num_turns: int | None = None
+            # Annotate outbound so callers can correlate cancel / progress.
+            evt_out: dict[str, Any] = dict(evt)
+            evt_out["analysis_id"] = analysis_id
+            yield evt_out  # type: ignore[misc]
 
-    assert proc.stdout is not None
-    for line in iter(proc.stdout.readline, ""):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            evt = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+            if t in ("done", "error"):
+                break
+        # Provider generator may have returned cleanly after cancel was
+        # signalled, without yielding another event for our is_set() check
+        # above to catch. Final test:
+        if cancel_event.is_set() and final_result is None and error_message is None:
+            cancelled = True
+    finally:
+        _CANCELS.pop(analysis_id, None)
 
-        # Accumulate per-turn usage from assistant messages.
-        if evt.get("type") == "assistant":
-            msg = evt.get("message") or {}
-            u = msg.get("usage") or {}
-            _accumulate_usage(usage_running, u)
-
-        label = _event_label(evt)
-        if label:
-            yield _with_usage({
-                "type": "progress",
-                "message": label,
-                "raw_type": evt.get("type"),
-            })
-
-        if evt.get("type") == "result":
-            if evt.get("is_error"):
-                yield {
-                    "type": "error",
-                    "message": f"claude error: {_shorten(str(evt.get('result') or evt), 400)}",
-                }
-                try: proc.wait(timeout=5)
-                except Exception: pass
-                return
-            final_result_text = evt.get("result") or ""
-            duration_ms = evt.get("duration_ms")
-            duration_api_ms = evt.get("duration_api_ms")
-            num_turns = evt.get("num_turns")
-            cost_running = float(evt.get("total_cost_usd") or 0.0)
-            # Final usage (if present) replaces the running accumulator.
-            final_usage = evt.get("usage") or {}
-            if final_usage:
-                usage_running = {k: int(final_usage.get(k, 0)) for k in (
-                    "input_tokens", "output_tokens",
-                    "cache_creation_input_tokens", "cache_read_input_tokens",
-                ) if final_usage.get(k) is not None}
-
-    proc.wait()
-
-    if final_result_text is None:
-        stderr = proc.stderr.read() if proc.stderr else ""
-        yield {
-            "type": "error",
-            "message": f"claude exited without a result (rc={proc.returncode}). {_shorten(stderr, 400)}",
-        }
-        return
-
-    yield _with_usage({"type": "progress", "message": "Parsing JSON", "raw_type": "parse"})
-    parsed = _extract_json(final_result_text)
-    if parsed is None:
-        yield {
-            "type": "error",
-            "message": "failed to parse JSON from claude response",
-        }
-        return
-
-    # Embed generation metadata in the saved file so later reads can show
-    # cost / duration without needing to run claude again.
-    parsed["_meta"] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "duration_ms": duration_ms,
-        "duration_api_ms": duration_api_ms,
-        "num_turns": num_turns,
-        "cost_usd": cost_running,
-        "tokens_in": usage_running.get("input_tokens", 0),
-        "tokens_out": usage_running.get("output_tokens", 0),
-        "cache_read_tokens": usage_running.get("cache_read_input_tokens", 0),
-        "cache_creation_tokens": usage_running.get("cache_creation_input_tokens", 0),
-    }
-
-    out_path = video_folder / "analysis.json"
-    out_path.write_text(
-        json.dumps(parsed, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    yield {
-        "type": "done",
-        "path": out_path.name,
-        "duration_ms": duration_ms,
-        "duration_api_ms": duration_api_ms,
-        "num_turns": num_turns,
-        "tokens_in": usage_running.get("input_tokens", 0),
-        "tokens_out": usage_running.get("output_tokens", 0),
-        "cache_read": usage_running.get("cache_read_input_tokens", 0),
-        "cache_creation": usage_running.get("cache_creation_input_tokens", 0),
-        "cost_usd": cost_running,
-    }
+    # Persist outcome.
+    conn = open_connection(out_dir / "app.db")
+    try:
+        finished_at = _iso_now()
+        if cancelled:
+            conn.execute(
+                "UPDATE analyses SET status='cancelled', finished_at=?, "
+                "error='cancelled by user' WHERE id=?",
+                (finished_at, analysis_id),
+            )
+            yield {
+                "type": "error",
+                "error_message": "cancelled by user",
+                "analysis_id": analysis_id,  # type: ignore[typeddict-unknown-key]
+            }
+        elif error_message is not None:
+            conn.execute(
+                "UPDATE analyses SET status='error', finished_at=?, error=? WHERE id=?",
+                (finished_at, error_message, analysis_id),
+            )
+        elif final_result is not None:
+            # Embed metadata in the saved JSON.
+            final_result["_meta"] = {
+                "generated_at": finished_at,
+                "provider": provider_name,
+                "model": model,
+                **{k: v for k, v in last_usage.items() if v is not None},
+            }
+            file_path = _write_result_file(
+                out_dir, video_id, analysis_id, final_result
+            )
+            conn.execute(
+                "UPDATE analyses SET status='done', finished_at=?, "
+                "cost_usd=?, tokens_in=?, tokens_out=?, file_path=? WHERE id=?",
+                (
+                    finished_at,
+                    last_usage.get("cost_usd"),
+                    last_usage.get("tokens_in"),
+                    last_usage.get("tokens_out"),
+                    file_path,
+                    analysis_id,
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE analyses SET status='error', finished_at=?, "
+                "error='provider produced no result' WHERE id=?",
+                (finished_at, analysis_id),
+            )
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
-# Sync wrapper (backward-compat)
+# Sync wrapper — drains the stream, returns the resulting file path.
+# Kept for callers that don't want live progress.
 # ---------------------------------------------------------------------------
 
 
-def analyze_video(out_dir: Path, video_id: str) -> Path | None:
-    """Drain the stream; return the analysis.json path on success, else None."""
-    for evt in stream_analyze_video(out_dir, video_id):
+def analyze_video(out_dir: Path, video_id: str, **kwargs) -> Path | None:
+    last_file: str | None = None
+    aid: int | None = None
+    saw_error = False
+    for evt in stream_analyze_video(out_dir, video_id, **kwargs):
+        aid = evt.get("analysis_id") or aid  # type: ignore[assignment]
         if evt.get("type") == "done":
-            return out_dir / video_id / (evt.get("path") or "analysis.json")
+            last_file = evt.get("file_path") or None
         if evt.get("type") == "error":
-            log.warning("analyze_video failed: %s", evt.get("message"))
+            saw_error = True
+    if saw_error and last_file is None:
+        return None
+    if aid is None:
+        return None
+    # Look up file_path from DB (authoritative).
+    conn = open_connection(out_dir / "app.db")
+    try:
+        row = conn.execute(
+            "SELECT file_path FROM analyses WHERE id=?", (aid,)
+        ).fetchone()
+        if not row or not row["file_path"]:
             return None
-    return None
+        return out_dir / video_id / row["file_path"]
+    finally:
+        conn.close()

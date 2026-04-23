@@ -344,26 +344,67 @@ def api_search(q: str = Query("", min_length=0), limit: int = Query(60, ge=1, le
 
 
 @app.post("/api/transcripts/{video_id}/analyze", dependencies=[Depends(auth.require_http)])
-async def api_trigger_analyze(video_id: str):
-    """Regenerate (or generate for the first time) analysis.json for an
-    existing transcript. Runs `claude -p` in a worker thread — can take
-    minutes for a long video. Use `/analyze/stream` for live progress."""
-    import anyio
-    path = await anyio.to_thread.run_sync(analyze_video, OUTPUT_DIR, video_id)
-    if path is None:
-        raise HTTPException(status_code=500, detail="analysis failed or claude unavailable")
-    return {"ok": True, "path": path.name}
+async def api_trigger_analyze(video_id: str, body: dict | None = Body(default=None)):
+    """Kick off analysis for an existing transcript via the chosen provider.
+    Body: {provider?: str, model?: str}. Defaults to claude_cli. Returns
+    immediately; watch `/analyze/stream` for live progress."""
+    import threading
+
+    import server.ai as ai_registry
+    from .analyze import stream_analyze_video as _stream_analyze
+
+    body = body or {}
+    provider_name = (body.get("provider") or "claude_cli")
+    model = body.get("model")
+
+    provider = ai_registry.get_provider(provider_name)
+    if provider is None:
+        raise HTTPException(status_code=400, detail=f"unknown provider: {provider_name}")
+    ok, reason = provider.available()
+    if not ok:
+        raise HTTPException(
+            status_code=400, detail=f"provider unavailable: {reason}"
+        )
+
+    # Fire-and-forget: drain the generator in a worker thread. The stream
+    # endpoint is the canonical place to watch progress.
+    def _drain() -> None:
+        try:
+            for _ in _stream_analyze(
+                OUTPUT_DIR,
+                video_id,
+                provider_name=provider_name,
+                model=model,
+            ):
+                pass
+        except Exception:  # pragma: no cover — keep the thread from dying silently
+            log.exception("background analyze drain failed for %s", video_id)
+
+    threading.Thread(target=_drain, daemon=True).start()
+    return {"started": True, "provider": provider_name, "model": model}
 
 
 @app.get("/api/transcripts/{video_id}/analyze/stream", dependencies=[Depends(auth.require_http)])
-async def api_stream_analyze(video_id: str):
-    """Stream Claude's live progress (tool calls, current step) as SSE events
-    while analysis runs. Use this instead of POST when the UI wants to show
-    what Claude is doing in real time.
-
-    Event types emitted: `progress`, `done`, `error`."""
+async def api_stream_analyze(
+    video_id: str,
+    provider: str = "claude_cli",
+    model: str | None = None,
+):
+    """Stream live analysis progress as SSE. Event types: `stage`, `usage`,
+    `progress`, `done`, `error`. Query params: `provider`, `model`."""
     import asyncio
     import json as _json
+
+    import server.ai as ai_registry
+
+    p = ai_registry.get_provider(provider)
+    if p is None:
+        raise HTTPException(status_code=400, detail=f"unknown provider: {provider}")
+    ok, reason = p.available()
+    if not ok:
+        raise HTTPException(
+            status_code=400, detail=f"provider unavailable: {reason}"
+        )
 
     async def event_gen():
         loop = asyncio.get_running_loop()
@@ -372,7 +413,10 @@ async def api_stream_analyze(video_id: str):
 
         def worker() -> None:
             try:
-                for evt in stream_analyze_video(OUTPUT_DIR, video_id):
+                for evt in stream_analyze_video(
+                    OUTPUT_DIR, video_id,
+                    provider_name=provider, model=model,
+                ):
                     loop.call_soon_threadsafe(q.put_nowait, {
                         "event": evt.get("type") or "progress",
                         "data": _json.dumps(evt, ensure_ascii=False),
@@ -380,7 +424,7 @@ async def api_stream_analyze(video_id: str):
             except Exception as e:
                 loop.call_soon_threadsafe(q.put_nowait, {
                     "event": "error",
-                    "data": _json.dumps({"message": f"{type(e).__name__}: {e}"}),
+                    "data": _json.dumps({"error_message": f"{type(e).__name__}: {e}"}),
                 })
             finally:
                 loop.call_soon_threadsafe(q.put_nowait, SENTINEL)
@@ -393,6 +437,22 @@ async def api_stream_analyze(video_id: str):
             yield item
 
     return EventSourceResponse(event_gen())
+
+
+@app.get("/api/ai/providers", dependencies=[Depends(auth.require_http)])
+def api_list_providers():
+    """List all analysis providers with availability + models."""
+    import server.ai as ai_registry
+    return ai_registry.list_providers()
+
+
+@app.post("/api/analyses/{analysis_id}/cancel", dependencies=[Depends(auth.require_http)])
+def api_cancel_analysis(analysis_id: int):
+    """Signal a running analysis to cancel. 404 if no in-flight run with that id."""
+    from .analyze import cancel_analysis
+    if not cancel_analysis(analysis_id):
+        raise HTTPException(status_code=404, detail="no running analysis with that id")
+    return {"cancel_requested": True, "analysis_id": analysis_id}
 
 
 # ---------------------------------------------------------------------------
