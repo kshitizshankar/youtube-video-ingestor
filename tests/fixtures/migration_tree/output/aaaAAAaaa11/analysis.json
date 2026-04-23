@@ -1,0 +1,7 @@
+{
+  "summary": "A summary.",
+  "takeaways": ["One.", "Two."],
+  "chapters": [{"start": 0, "title": "Intro"}],
+  "highlights": [],
+  "_meta": {"cost_usd": 0.05, "tokens_in": 500, "tokens_out": 100, "generated_at": "2026-01-05T10:30:00+00:00"}
+}

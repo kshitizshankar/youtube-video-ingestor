@@ -1,0 +1,10 @@
+{
+  "id": "bbbBBBbbb22",
+  "url": "https://youtu.be/bbbBBBbbb22",
+  "title": "Plain transcript",
+  "duration_sec": 300.0,
+  "language": "en",
+  "diarized": false,
+  "segments": [{"id": 1, "start": 0.0, "end": 3.0, "text": "Hi."}],
+  "archived": true
+}

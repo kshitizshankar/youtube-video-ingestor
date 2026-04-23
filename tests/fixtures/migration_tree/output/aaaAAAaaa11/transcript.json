@@ -1,0 +1,31 @@
+{
+  "id": "aaaAAAaaa11",
+  "url": "https://youtu.be/aaaAAAaaa11",
+  "title": "Diarized talk",
+  "duration_sec": 1200.0,
+  "language": "en",
+  "language_probability": 0.98,
+  "model": "distil-large-v3",
+  "compute_type": "int8_float16",
+  "diarized": true,
+  "speaker_count": 2,
+  "channel": "Channel A",
+  "channel_id": "UCabc",
+  "channel_url": "https://youtube.com/@a",
+  "channel_follower_count": 50000,
+  "upload_date": "20250101",
+  "view_count": 1000,
+  "like_count": 10,
+  "comment_count": 2,
+  "description": "A short description.",
+  "categories": ["Education"],
+  "yt_tags": ["ai", "research"],
+  "transcription_elapsed_sec": 100.0,
+  "transcription_realtime_factor": 12.0,
+  "batched": true,
+  "batch_size": 16,
+  "segments": [
+    {"id": 1, "start": 0.0, "end": 5.0, "text": "Hello.", "speaker": "SPEAKER_00"},
+    {"id": 2, "start": 5.0, "end": 10.0, "text": "World.", "speaker": "SPEAKER_01"}
+  ]
+}
