@@ -25,15 +25,22 @@ def _clean_state():
 def test_enqueue_returns_immediately(tmp_path: Path):
     blocked = threading.Event()
     released = threading.Event()
+    transcribe_called = threading.Event()
 
-    async def fake_stream(req, out_dir, hf_token=None):
+    def fake_download(url, out_dir):
         blocked.set()
         released.wait(timeout=5.0)
-        if False:  # pragma: no cover
-            yield {}  # make it an async generator
-        return
+        vid = "aaaa1111aaa"
+        folder = out_dir / vid
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "audio.mp3").write_bytes(b"fake")
+        return folder / "audio.mp3", {"id": vid, "title": "T", "duration": 1}
 
-    with patch.object(queue_mod, "stream_transcription", fake_stream):
+    def noop_transcribe(*args, **kwargs):
+        transcribe_called.set()
+
+    with patch.object(queue_mod, "download_audio", fake_download), \
+         patch.object(queue_mod, "_transcribe_task", noop_transcribe):
         t0 = time.time()
         queue_mod.enqueue_ingest(
             TranscribeRequest(url="https://youtu.be/aaaa1111aaa", device="cpu"),
@@ -42,9 +49,12 @@ def test_enqueue_returns_immediately(tmp_path: Path):
         elapsed = time.time() - t0
         # enqueue should return in well under 1s regardless of worker state.
         assert elapsed < 1.0, f"enqueue blocked for {elapsed:.2f}s"
-        # Make sure the worker actually started before we release the patch.
+        # Make sure the download worker actually started before we release.
         assert blocked.wait(timeout=5.0)
         released.set()
+        # Wait for the handoff to the transcribe stage so the patched
+        # _transcribe_task runs (not the real one) before patch context exits.
+        assert transcribe_called.wait(timeout=5.0)
 
 
 def test_mark_queued_orphans(tmp_path: Path):
