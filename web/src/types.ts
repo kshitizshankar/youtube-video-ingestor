@@ -73,7 +73,6 @@ export type SseEvent =
         realtime_factor: number;
         duration_sec: number;
         files: Record<string, string>;
-        analyzed?: boolean;
       };
     }
   | { event: "error"; data: { message: string } };

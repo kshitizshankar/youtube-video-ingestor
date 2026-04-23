@@ -358,16 +358,9 @@ export default function Detail({
 
     es.addEventListener("phase", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
-      const phaseName = d.phase ?? "";
       const msg = d.message ?? d.phase;
       setStatus(msg);
       markEvent();
-      // Detect the analysis phase so the status bar shows up on all tabs.
-      if (typeof phaseName === "string" && phaseName.toLowerCase().includes("analyz")) {
-        setAnalysisBusy(true);
-        setAnalysisStartedAt((prev) => prev ?? Date.now());
-        setAnalysisPhase(msg || "Running Claude analysis");
-      }
     });
     es.addEventListener("downloaded", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
@@ -390,33 +383,17 @@ export default function Detail({
     es.addEventListener("heartbeat", () => {
       markEvent();
     });
-    // Live sub-progress emitted by the server's claude stream-json wrapper.
-    es.addEventListener("analyze_progress", (ev) => {
-      try {
-        const d = JSON.parse((ev as MessageEvent).data);
-        if (d.message) setAnalysisPhase(d.message);
-        if (typeof d.tokens_in === "number") setAnalysisTokensIn(d.tokens_in);
-        if (typeof d.tokens_out === "number") setAnalysisTokensOut(d.tokens_out);
-        if (typeof d.cost_usd === "number") setAnalysisCostUsd(d.cost_usd);
-        setAnalysisBusy(true);
-        setAnalysisStartedAt((prev) => prev ?? Date.now());
-      } catch { /* ignore */ }
-      markEvent();
-    });
     es.addEventListener("done", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
       setStatus(`Done · ${d.elapsed_sec.toFixed(1)}s · ${d.realtime_factor.toFixed(1)}× realtime`);
       setBusy(false);
-      setAnalysisBusy(false);
-      setAnalysisStartedAt(null);
-      setAnalysisPhase("");
       es.close();
       if (esRef.current === es) esRef.current = null;
       doneFnRef.current?.();
-      // Re-fetch both: transcript file now carries timing meta, analysis was just written.
+      // Transcript now carries timing meta; re-fetch it. Analysis is user-
+      // triggered now (see handleRegenerateAnalysis) — no auto-fetch here.
       if (videoId) {
         getTranscript(videoId).then(setTranscript).catch(() => {});
-        getAnalysis(videoId).then((a) => setAnalysis(a)).catch(() => {});
       }
     });
     es.addEventListener("error", (ev) => {
@@ -427,9 +404,6 @@ export default function Detail({
       }
       setStatus(`Error: ${msg}`);
       setBusy(false);
-      setAnalysisBusy(false);
-      setAnalysisStartedAt(null);
-      setAnalysisPhase("");
       es.close();
       if (esRef.current === es) esRef.current = null;
     });

@@ -602,30 +602,6 @@ async def stream_transcription(
                 batch_size=req.batch_size,
             )
 
-            from .analyze import stream_analyze_video
-            tracked_push("phase", {
-                "phase": "analyzing",
-                "message": "Generating summary, highlights & chapters...",
-            })
-            analysis_ok = False
-            try:
-                for evt in stream_analyze_video(out_dir, video_id):
-                    t = evt.get("type")
-                    if t == "progress":
-                        # Live sub-step, e.g. "Reading transcript.json", "Running jq…"
-                        tracked_push("analyze_progress", {"message": evt.get("message") or ""})
-                    elif t == "done":
-                        analysis_ok = True
-                    elif t == "error":
-                        tracked_push("analyze_progress", {
-                            "message": f"Analysis failed: {evt.get('message')}",
-                        })
-            except Exception as e:  # pragma: no cover — best-effort step
-                tracked_push("phase", {
-                    "phase": "analyzing",
-                    "message": f"Analysis skipped: {type(e).__name__}",
-                })
-
             duration = info.get("duration") or 0
             rt = (duration / result["elapsed_sec"]) if result["elapsed_sec"] > 0 and duration else 0
             state.update(video_id, phase="done")
@@ -636,7 +612,6 @@ async def stream_transcription(
                 "realtime_factor": rt,
                 "duration_sec": duration,
                 "files": {k: str(v.name) for k, v in files.items()},
-                "analyzed": analysis_ok,
             })
         except _Cancelled:
             if video_id:

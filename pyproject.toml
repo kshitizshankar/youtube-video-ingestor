@@ -38,3 +38,10 @@ torchvision = { index = "pytorch-cu128" }
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "anyio>=4.13.0",
+    "pytest>=9.0.3",
+    "pytest-mock>=3.15.1",
+]
