@@ -4,6 +4,7 @@ import TopBar from "./components/TopBar";
 import VideoRow from "./components/VideoRow";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddVideosModal from "./components/AddVideosModal";
+import IngestCard from "./components/IngestCard";
 import Toast, { type ToastKind } from "./components/Toast";
 import { type IngestState, listIngests } from "./api";
 import {
@@ -327,18 +328,25 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
           </div>
         </header>
 
-        {activeIngests.length > 0 && (
-          <div className="ingest-banner" role="status" aria-live="polite">
-            <span className="ingest-banner-dot" aria-hidden />
-            <span>
-              {activeIngests.length} transcribing —{" "}
-              <Link to="/">watch progress in Library</Link>
-            </span>
-          </div>
+        {projectIngests.length > 0 && (
+          <section className="ingest-strip">
+            <header>
+              <span className="label">In progress</span>
+              <span className="count">
+                {activeIngests.length} active ·{" "}
+                {projectIngests.filter((i) => i.done).length} just finished
+              </span>
+            </header>
+            <div className="ingest-cards">
+              {projectIngests.map((ing) => (
+                <IngestCard key={ing.id} ing={ing} />
+              ))}
+            </div>
+          </section>
         )}
 
         <section className="project-videos">
-          {videos.length === 0 && activeIngests.length === 0 ? (
+          {videos.length === 0 && projectIngests.length === 0 ? (
             <div className="empty">
               No videos yet. Click <span className="accent">Add videos</span> to
               import from a playlist or paste URLs.

@@ -408,6 +408,80 @@ a { color: inherit; text-decoration: none; }
   font-family: var(--font-mono);
 }
 
+/* Sort dropdown — replaces the old static "Sort: …" label. */
+.sort-control {
+  position: relative;
+  margin-left: auto;
+}
+.sort-button {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sort-button:hover { background: var(--bg-3); color: var(--ink); border-color: var(--line-2); }
+.sort-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.sort-menu-item {
+  text-align: left;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+  background: transparent;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sort-menu-item:hover { background: var(--bg-2); color: var(--ink); }
+.sort-menu-item.active {
+  background-image: var(--gradient);
+  color: #fff;
+}
+
+/* Project pill chips on VideoRow (library shows what project a video is in). */
+.row-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.project-pill {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-2));
+  color: var(--ink-2);
+  border: 1px solid color-mix(in oklch, var(--accent) 25%, var(--line));
+  text-decoration: none;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-pill:hover {
+  background: color-mix(in oklch, var(--accent) 22%, var(--bg-2));
+  color: var(--ink);
+}
+
 .row-head {
   display: grid;
   grid-template-columns: 80px 1fr 220px 110px 110px 36px;
@@ -1065,7 +1139,18 @@ a.vm-channel:hover {
   font-size: 12px;
   color: var(--ink-3);
 }
-.tr-search input { flex: 1; font-size: 12px; }
+.tr-search input { flex: 1; font-size: 12px; min-width: 0; }
+.tr-search-clear {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.tr-search-clear:hover { color: var(--ink); background: var(--bg-3); }
 
 .transcript-body {
   flex: 1; overflow: auto;
@@ -1140,6 +1225,146 @@ a.vm-channel:hover {
   font-family: var(--font-sans);
   max-width: 72ch;
   text-wrap: pretty;
+}
+
+/* ------- Check-screen marks --------------------------------------
+   A segment carrying any active mark gets a subtle left-border accent
+   and a slightly warmer tint so it reads as flagged without competing
+   with the "current segment" gradient bar. Codex-suggested marks that
+   the user hasn't yet acted on show a dashed border to signal "needs
+   your review" — distinct from confirmed user marks. */
+.tr-segment.has-mark {
+  background: color-mix(in oklab, var(--accent-2) 6%, transparent);
+  margin: 0 -8px;
+  padding: 10px 8px;
+}
+.tr-segment.has-mark::after {
+  content: '';
+  position: absolute;
+  left: -2px; top: 6px; bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent-2);
+  opacity: 0.75;
+}
+.tr-segment.mark-codex-suggested::after {
+  background: transparent;
+  border-left: 3px dashed var(--accent-2);
+  width: 0;
+  opacity: 1;
+}
+.tr-segment.current.has-mark::before {
+  /* Keep the gradient bar sitting on top of the mark accent when both apply. */
+  z-index: 1;
+}
+
+.tr-mark-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  padding: 0;
+  margin-left: auto;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-4);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.55;
+  transition: background 120ms ease, opacity 120ms ease, color 120ms ease;
+}
+.tr-segment:hover .tr-mark-btn { opacity: 1; }
+.tr-mark-btn:hover {
+  background: var(--bg-3);
+  color: var(--ink-2);
+}
+.tr-mark-btn.is-marked {
+  background: var(--accent-soft);
+  color: var(--accent);
+  opacity: 1;
+}
+.tr-mark-btn.is-suggested {
+  color: var(--accent-2);
+  opacity: 1;
+}
+
+.tr-mark-suggested {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-sm);
+  max-width: 72ch;
+  font-family: var(--font-sans);
+}
+.tr-mark-meta {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+}
+.tr-mark-priority {
+  padding: 1px 6px; border-radius: 3px;
+  font-family: var(--font-mono);
+  font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--ink);
+}
+.tr-mark-priority.p-high   { background: color-mix(in oklab, var(--accent) 28%, transparent); }
+.tr-mark-priority.p-medium { background: color-mix(in oklab, var(--accent-2) 26%, transparent); }
+.tr-mark-priority.p-low    { background: var(--bg-3); color: var(--ink-2); }
+.tr-mark-signal {
+  padding: 1px 6px; border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.tr-mark-expect {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.45;
+  margin-bottom: 6px;
+}
+.tr-mark-actions {
+  display: flex; gap: 6px;
+}
+.tr-mark-accept, .tr-mark-dismiss {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+}
+.tr-mark-accept {
+  background-image: var(--gradient);
+  color: #fff;
+}
+.tr-mark-accept:hover { filter: brightness(1.08); }
+.tr-mark-dismiss {
+  background: var(--bg-3);
+  color: var(--ink-3);
+}
+.tr-mark-dismiss:hover { background: var(--line-2); color: var(--ink); }
+
+/* Filter button in the transcript pane header. Mirrors .tr-tab styling
+   so it lives comfortably next to the tab row. */
+.tr-marked-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+.tr-marked-filter:hover { background: var(--bg-3); color: var(--ink); }
+.tr-marked-filter.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--line));
+  color: var(--accent);
 }
 
 /* Streaming-state skeleton */
@@ -1788,9 +2013,10 @@ a.vm-channel:hover {
 }
 
 /* ==============================================================
-   THEME TOGGLE (sidebar footer icon)
+   SIDEBAR FOOTER ICONS (theme toggle, settings link)
    ============================================================== */
 
+.sidebar-icon-btn,
 .theme-toggle {
   width: 30px;
   height: 30px;
@@ -1800,8 +2026,10 @@ a.vm-channel:hover {
   color: var(--ink-3);
   background: transparent;
   border: 1px solid transparent;
+  cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
+.sidebar-icon-btn:hover,
 .theme-toggle:hover {
   background: var(--bg-3);
   color: var(--ink);
@@ -2227,6 +2455,20 @@ a.vm-channel:hover {
   font-size: 14px;
   color: var(--ink);
   line-height: 1.4;
+}
+.chapter-item .ch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.chapter-item .ch-note {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.45;
+}
+.chapter-item.has-note {
+  align-items: start;
 }
 .chapter-item .ch-time {
   font-family: var(--font-mono);

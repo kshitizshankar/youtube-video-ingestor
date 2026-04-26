@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { formatCount, formatDuration, formatYtDate } from "../format";
-import type { TranscriptSummary } from "../types";
+import type { Project, TranscriptSummary } from "../types";
 
 export interface VideoRowProps {
   v: TranscriptSummary;
@@ -10,10 +10,13 @@ export interface VideoRowProps {
   archiveLabel?: string;
   /** Optional extra right-side action (e.g. Delete on Archive page). */
   onDelete?: (id: string) => void;
+  /** Look-up of project_id → Project for rendering badges. Pass an empty
+   *  map (the default) to suppress badges. */
+  projectsById?: Map<string, Project>;
 }
 
 export default function VideoRow({
-  v, highlight, onArchiveToggle, archiveLabel = "Archive", onDelete,
+  v, highlight, onArchiveToggle, archiveLabel = "Archive", onDelete, projectsById,
 }: VideoRowProps) {
   function handleArchive(e: React.MouseEvent) {
     e.preventDefault(); e.stopPropagation();
@@ -58,6 +61,25 @@ export default function VideoRow({
             </>
           )}
         </div>
+        {(v.project_ids?.length ?? 0) > 0 && projectsById && (
+          <div className="row-projects">
+            {v.project_ids!.map((pid) => {
+              const p = projectsById.get(pid);
+              if (!p) return null;
+              return (
+                <Link
+                  key={pid}
+                  to={`/p/${pid}`}
+                  className="project-pill"
+                  title={p.name}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {p.name}
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="speakers-cell">
         {sp >= 2 ? (

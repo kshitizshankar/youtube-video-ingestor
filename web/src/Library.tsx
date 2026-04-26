@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   archiveVideo,
   type IngestState,
@@ -8,11 +8,22 @@ import {
   type SearchHit,
   searchTranscripts,
 } from "./api";
+import { listProjects } from "./projects";
+import IngestCard from "./components/IngestCard";
 import SearchBar from "./components/SearchBar";
 import SearchResults from "./components/SearchResults";
 import TopBar from "./components/TopBar";
 import VideoRow from "./components/VideoRow";
-import type { TranscriptSummary } from "./types";
+import type { Project, TranscriptSummary } from "./types";
+
+type SortKey = "recent" | "duration" | "title" | "channel";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  recent: "Recently added",
+  duration: "Longest first",
+  title: "Title A→Z",
+  channel: "Channel A→Z",
+};
 
 export interface LibraryProps {
   onAdd: () => void;
@@ -37,11 +48,46 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [searchTruncated, setSearchTruncated] = useState(false);
   const [searchElapsedMs, setSearchElapsedMs] = useState<number | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
+  const [sortOpen, setSortOpen] = useState(false);
   const searchGenRef = useRef(0);
+
+  // Project filter is URL-driven so deep links from Project pages preselect it.
+  // Empty / missing => "all projects".
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedProjectId = searchParams.get("project") || null;
+  const setSelectedProject = useCallback(
+    (pid: string | null) => {
+      const next = new URLSearchParams(searchParams);
+      if (pid) next.set("project", pid);
+      else next.delete("project");
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
 
   useEffect(() => {
     listTranscripts().then(setItems).catch(console.error);
   }, [refreshKey]);
+
+  useEffect(() => {
+    listProjects().then(setProjects).catch(() => setProjects([]));
+  }, [refreshKey]);
+
+  const projectsById = useMemo(() => {
+    const m = new Map<string, Project>();
+    for (const p of projects) m.set(p.id, p);
+    return m;
+  }, [projects]);
+
+  // If a previously-selected project disappears (deleted in another tab),
+  // silently fall back to "all".
+  useEffect(() => {
+    if (selectedProjectId && projects.length > 0 && !projectsById.has(selectedProjectId)) {
+      setSelectedProject(null);
+    }
+  }, [selectedProjectId, projects, projectsById, setSelectedProject]);
 
   // Poll active ingests so we can show a "currently ingesting" strip.
   useEffect(() => {
@@ -63,7 +109,33 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const visible = filter === "diarized" ? items.filter((v) => v.diarized) : items;
+  const projectScoped = useMemo(() => {
+    if (!selectedProjectId) return items;
+    return items.filter((v) => (v.project_ids ?? []).includes(selectedProjectId));
+  }, [items, selectedProjectId]);
+
+  const visible = useMemo(() => {
+    let out = projectScoped;
+    if (filter === "diarized") out = out.filter((v) => v.diarized);
+    const sorted = [...out];
+    switch (sortKey) {
+      case "duration":
+        sorted.sort((a, b) => (b.duration_sec ?? 0) - (a.duration_sec ?? 0));
+        break;
+      case "title":
+        sorted.sort((a, b) => a.title.localeCompare(b.title));
+        break;
+      case "channel":
+        sorted.sort((a, b) => (a.channel ?? "").localeCompare(b.channel ?? ""));
+        break;
+      case "recent":
+      default:
+        // Server already returns videos in created_at DESC order; keep that.
+        break;
+    }
+    return sorted;
+  }, [projectScoped, filter, sortKey]);
+
   const segCount = items.reduce((acc, v) => acc + (v.segment_count || 0), 0);
 
   const handleArchive = useCallback(async (id: string) => {
@@ -126,14 +198,9 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
           )
         }
         actions={
-          <>
-            <button className="btn hide-on-narrow">
-              <FilterIcon /> Filter
-            </button>
-            <button className="btn btn-primary" onClick={onAdd}>
-              <PlusIcon /> Add
-            </button>
-          </>
+          <button className="btn btn-primary" onClick={onAdd}>
+            <PlusIcon /> Add
+          </button>
         }
       />
       <div className="library">
@@ -195,16 +262,68 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
             className={`chip ${filter === "all" ? "active" : ""}`}
             onClick={() => setFilter("all")}
           >
-            All {items.length}
+            All {projectScoped.length}
           </span>
           <span
             className={`chip ${filter === "diarized" ? "active" : ""}`}
             onClick={() => setFilter("diarized")}
           >
-            <SpeakerGlyph /> Multi-speaker {items.filter((v) => v.diarized).length}
+            <SpeakerGlyph /> Multi-speaker {projectScoped.filter((v) => v.diarized).length}
           </span>
-          <span className="sort">Sort: Recently added ↓</span>
+
+          <span className="sort-control">
+            <button
+              type="button"
+              className="sort-button"
+              onClick={() => setSortOpen((v) => !v)}
+              title="Change sort"
+            >
+              Sort: {SORT_LABELS[sortKey]} ↓
+            </button>
+            {sortOpen && (
+              <div className="sort-menu" role="menu">
+                {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`sort-menu-item ${k === sortKey ? "active" : ""}`}
+                    onClick={() => { setSortKey(k); setSortOpen(false); }}
+                    role="menuitem"
+                  >
+                    {SORT_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </span>
         </div>
+
+        {projects.length > 0 && (
+          <div className="filters">
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--ink-3)" }}>
+              Project
+            </span>
+            <span
+              className={`chip ${selectedProjectId === null ? "active" : ""}`}
+              onClick={() => setSelectedProject(null)}
+            >
+              All {items.length}
+            </span>
+            {projects.map((p) => {
+              const count = items.filter((v) => (v.project_ids ?? []).includes(p.id)).length;
+              return (
+                <span
+                  key={p.id}
+                  className={`chip ${selectedProjectId === p.id ? "active" : ""}`}
+                  onClick={() => setSelectedProject(p.id)}
+                  title={p.description || p.name}
+                >
+                  {p.name} {count}
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         <div className="row-head">
           <div></div>
@@ -217,11 +336,18 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
 
         {visible.length === 0 ? (
           <div className="library-empty">
-            No videos yet. Click <span className="accent">Add video</span> to get started.
+            {selectedProjectId
+              ? "No videos match this project filter yet."
+              : <>No videos yet. Click <span className="accent">Add video</span> to get started.</>}
           </div>
         ) : (
           visible.map((v) => (
-            <VideoRow key={v.id} v={v} onArchiveToggle={handleArchive} />
+            <VideoRow
+              key={v.id}
+              v={v}
+              onArchiveToggle={handleArchive}
+              projectsById={projectsById}
+            />
           ))
         )}
           </>
@@ -231,13 +357,6 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   );
 }
 
-function FilterIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18M7 12h10M10 18h4" />
-    </svg>
-  );
-}
 function PlusIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -271,13 +390,16 @@ function IngestStrip({ ingests }: { ingests: IngestState[] }) {
     const id = window.setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => clearInterval(id);
   }, []);
-  const sorted = [...ingests].sort((a, b) => Number(a.done) - Number(b.done) || b.started_at - a.started_at);
+  const sorted = [...ingests].sort(
+    (a, b) => Number(a.done) - Number(b.done) || b.started_at - a.started_at,
+  );
   return (
     <section className="ingest-strip">
       <header>
         <span className="label">In progress</span>
         <span className="count">
-          {ingests.filter((i) => !i.done).length} active · {ingests.filter((i) => i.done).length} just finished
+          {ingests.filter((i) => !i.done).length} active ·{" "}
+          {ingests.filter((i) => i.done).length} just finished
         </span>
       </header>
       <div className="ingest-cards">
@@ -287,52 +409,4 @@ function IngestStrip({ ingests }: { ingests: IngestState[] }) {
       </div>
     </section>
   );
-}
-
-function IngestCard({ ing, now }: { ing: IngestState; now: number }) {
-  const thumb = `https://img.youtube.com/vi/${ing.id}/hqdefault.jpg`;
-  const elapsedSec = Math.max(0, now - ing.started_at);
-  const staleSec = Math.max(0, now - ing.last_event_at);
-  const pct = ing.duration_sec && ing.duration_sec > 0
-    ? Math.min(100, (ing.last_segment_end / ing.duration_sec) * 100)
-    : 0;
-  const stalled = !ing.done && staleSec > 15;
-  const cls = ["job-card"];
-  if (ing.done) cls.push(ing.error ? "is-error" : "is-done");
-  else if (stalled) cls.push("is-stalled");
-  else cls.push("is-busy");
-
-  const phaseLabel = ing.error
-    ? `Error: ${ing.error}`
-    : ing.done
-      ? "Done"
-      : ing.phase || "working";
-
-  return (
-    <Link to={`/v/${ing.id}`} className={cls.join(" ")}>
-      <div className="ic-thumb">
-        <img src={thumb} alt="" loading="lazy" />
-      </div>
-      <div className="ic-body">
-        <div className="ic-title">{ing.title || ing.id}</div>
-        <div className="ic-meta">
-          <span className="ic-phase">{phaseLabel}</span>
-          <span className="ic-sep">·</span>
-          <span>{fmtMinSec(elapsedSec)} elapsed</span>
-          {ing.segments > 0 && (<><span className="ic-sep">·</span><span>{ing.segments} seg</span></>)}
-          {ing.duration_sec ? (<><span className="ic-sep">·</span><span>{pct.toFixed(0)}%</span></>) : null}
-          {stalled && <span className="ic-stall">stalled {Math.floor(staleSec)}s</span>}
-        </div>
-        <div className="ic-bar"><div className="ic-fill" style={{ width: `${pct}%` }} /></div>
-      </div>
-    </Link>
-  );
-}
-
-function fmtMinSec(sec: number): string {
-  const s = Math.floor(sec);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${m}m ${String(rem).padStart(2, "0")}s`;
 }
