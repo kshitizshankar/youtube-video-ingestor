@@ -5,11 +5,19 @@ import type { AiProvider } from "../types";
 export interface AnalyzeTriggerModalProps {
   open: boolean;
   onClose: () => void;
-  /** Fires when the user hits "Run analysis". Modal closes immediately after. */
-  onSubmit: (provider: string, model: string | undefined) => void | Promise<void>;
+  /** Fires when the user hits "Run analysis". Modal closes immediately after.
+   *  `skipDialog` reflects the "Don't show this again" checkbox state — the
+   *  caller is responsible for persisting the chosen defaults. */
+  onSubmit: (
+    provider: string,
+    model: string | undefined,
+    skipDialog: boolean,
+  ) => void | Promise<void>;
   /** Optional preselection (e.g. from a previous run). */
   initialProvider?: string;
   initialModel?: string;
+  /** Preselected state for the "Don't show this again" checkbox. */
+  initialSkipDialog?: boolean;
 }
 
 /** Modal that lets the user pick a provider + model before kicking off an
@@ -21,12 +29,14 @@ export default function AnalyzeTriggerModal({
   onSubmit,
   initialProvider,
   initialModel,
+  initialSkipDialog,
 }: AnalyzeTriggerModalProps) {
   const [providers, setProviders] = useState<AiProvider[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [provider, setProvider] = useState<string>(initialProvider ?? "claude_cli");
   const [model, setModel] = useState<string>(""); // "" = default
   const [submitting, setSubmitting] = useState(false);
+  const [skipDialog, setSkipDialog] = useState<boolean>(Boolean(initialSkipDialog));
 
   // Reset + fetch on every open.
   useEffect(() => {
@@ -35,6 +45,7 @@ export default function AnalyzeTriggerModal({
     setProviders(null);
     setLoadError(null);
     setSubmitting(false);
+    setSkipDialog(Boolean(initialSkipDialog));
     listAiProviders()
       .then((list) => {
         if (cancelled) return;
@@ -61,7 +72,7 @@ export default function AnalyzeTriggerModal({
     return () => {
       cancelled = true;
     };
-  }, [open, initialProvider, initialModel]);
+  }, [open, initialProvider, initialModel, initialSkipDialog]);
 
   // Esc closes.
   useEffect(() => {
@@ -90,7 +101,11 @@ export default function AnalyzeTriggerModal({
     if (!selected || !selected.available) return;
     setSubmitting(true);
     try {
-      await onSubmit(selected.name, model.trim() === "" ? undefined : model);
+      await onSubmit(
+        selected.name,
+        model.trim() === "" ? undefined : model,
+        skipDialog,
+      );
       onClose();
     } catch (err) {
       // Surface error inline — caller typically toasts, but we also want
@@ -209,6 +224,44 @@ export default function AnalyzeTriggerModal({
                 ))}
               </select>
             </label>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
+              }}
+            >
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  color: "var(--ink-2)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={skipDialog}
+                  onChange={(e) => setSkipDialog(e.target.checked)}
+                  disabled={submitting}
+                  style={{ margin: 0 }}
+                />
+                <span>Don&rsquo;t show this again</span>
+              </label>
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: "var(--ink-3)",
+                  marginLeft: 24,
+                }}
+              >
+                You can change this anytime in Settings.
+              </span>
+            </div>
 
             <div className="modal-actions atm-actions">
               <button type="button" onClick={onClose} disabled={submitting}>

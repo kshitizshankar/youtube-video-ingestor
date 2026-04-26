@@ -35,11 +35,14 @@ export default function ChaptersView({ analysis, loading, currentTime, onSeek }:
       {chapters.map((c, i) => (
         <li
           key={i}
-          className={`chapter-item ${i === activeIdx ? "is-current" : ""}`}
+          className={`chapter-item ${i === activeIdx ? "is-current" : ""} ${c.note ? "has-note" : ""}`}
           onClick={() => onSeek(c.start)}
         >
           <span className="ch-num">{String(i + 1).padStart(2, "0")}</span>
-          <span className="ch-title">{c.title}</span>
+          <div className="ch-body">
+            <span className="ch-title">{c.title}</span>
+            {c.note && <span className="ch-note">{c.note}</span>}
+          </div>
           <span className="ch-time">{fmtTs(c.start)}</span>
         </li>
       ))}

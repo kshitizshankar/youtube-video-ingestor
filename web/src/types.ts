@@ -13,6 +13,9 @@ export interface TranscriptSummary {
   upload_date?: string | null;     // "YYYYMMDD"
   view_count?: number | null;
   like_count?: number | null;
+  /** Projects this video belongs to. Empty array when unaffiliated. Used by
+   *  the library for badges + filtering. */
+  project_ids?: string[];
 }
 
 export interface VideoMeta {
@@ -80,6 +83,9 @@ export type SseEvent =
 export interface Chapter {
   start: number;
   title: string;
+  /** One-sentence description of what happens in this section. Added in the
+   *  richer-insights schema; absent on legacy analyses. */
+  note?: string;
 }
 
 export interface Highlight {
@@ -87,7 +93,55 @@ export interface Highlight {
   end: number;
   speaker: string | null;
   quote: string;
+  /** Under the richer prompt, this is phrased as "easy to miss because ___".
+   *  Legacy analyses populated it with a generic "why this stands out" line;
+   *  both render the same way in the UI. */
   reason: string;
+}
+
+export type CheckScreenSignal =
+  | "deictic_reference"
+  | "code_on_screen"
+  | "diagram_drawn"
+  | "matrix_math_shown"
+  | "figure_reference"
+  | "animation_or_transition";
+
+export interface CheckScreenCandidate {
+  t_sec: number;
+  segment_id: number;
+  trigger_text: string;
+  signal: CheckScreenSignal;
+  what_i_expect_to_see: string;
+  priority: "high" | "medium" | "low";
+}
+
+/** Kinds of check-screen marks stored in the DB. `codex_suggested` comes from
+ *  an AI analysis; `user_marked` is a user-created mark; `user_confirmed` is
+ *  a codex suggestion the user accepted; `dismissed` tombstones a rejected
+ *  suggestion so it doesn't re-appear. */
+export type CheckScreenMarkKind =
+  | "codex_suggested"
+  | "user_marked"
+  | "user_confirmed"
+  | "dismissed";
+
+/** A persisted annotation on a transcript moment. Row shape from
+ *  `check_screen_marks`. Optional fields mirror NULL-able columns. */
+export interface CheckScreenMark {
+  id: number;
+  video_id: string;
+  t_sec: number;
+  segment_id: number | null;
+  kind: CheckScreenMarkKind;
+  trigger_text: string | null;
+  signal: CheckScreenSignal | string | null;
+  what_i_expect_to_see: string | null;
+  priority: "high" | "medium" | "low" | null;
+  note: string | null;
+  analysis_id: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AnalysisMeta {
@@ -103,10 +157,17 @@ export interface AnalysisMeta {
 }
 
 export interface Analysis {
-  summary: string;
+  /** Legacy short-summary field. New analyses may omit this and populate
+   *  `value_prop` + `narrative_summary` instead. */
+  summary?: string;
+  /** 1-3 sentence payoff: what a viewer walks away with. */
+  value_prop?: string;
+  /** Multi-paragraph faithful retelling. */
+  narrative_summary?: string;
   takeaways: string[];
   chapters: Chapter[];
   highlights: Highlight[];
+  check_screen_candidates?: CheckScreenCandidate[];
   _meta?: AnalysisMeta;
 }
 

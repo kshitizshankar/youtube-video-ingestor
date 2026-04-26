@@ -1,5 +1,13 @@
 import { authFetch, withAuthQuery } from "./auth";
-import type { AiProvider, Analysis, Transcript, TranscriptSummary, VideoMeta } from "./types";
+import type {
+  AiProvider,
+  Analysis,
+  CheckScreenMark,
+  CheckScreenMarkKind,
+  Transcript,
+  TranscriptSummary,
+  VideoMeta,
+} from "./types";
 
 export async function listTranscripts(): Promise<TranscriptSummary[]> {
   const r = await authFetch("/api/transcripts");
@@ -41,31 +49,6 @@ export async function getAnalysis(id: string): Promise<Analysis | null> {
 export async function listAiProviders(): Promise<AiProvider[]> {
   const r = await authFetch("/api/ai/providers");
   if (!r.ok) throw new Error(`listAiProviders: ${r.status}`);
-  return r.json();
-}
-
-/** Kick off analysis for a given video. Fire-and-forget — watch
- *  `openAnalysisStream` for live progress. 400 if provider is unavailable. */
-export async function triggerAnalyze(
-  id: string,
-  provider: string = "claude_cli",
-  model?: string,
-): Promise<{ started: boolean; provider: string; model: string | null }> {
-  const r = await authFetch(`/api/transcripts/${id}/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, model: model ?? null }),
-  });
-  if (!r.ok) {
-    const body = await r.text().catch(() => "");
-    try {
-      const parsed = JSON.parse(body);
-      throw new Error(parsed.detail || `triggerAnalyze: ${r.status}`);
-    } catch (e) {
-      if (e instanceof Error && e.message && !e.message.startsWith("Unexpected")) throw e;
-      throw new Error(`triggerAnalyze: ${r.status}`);
-    }
-  }
   return r.json();
 }
 
@@ -226,6 +209,89 @@ export function ptyWebSocketUrl(videoId?: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const qs = videoId ? `?video_id=${encodeURIComponent(videoId)}` : "";
   return withAuthQuery(`${proto}//${window.location.host}/api/pty${qs}`);
+}
+
+// -------------------------------------------------------------------
+// Check-screen marks — AI-suggested + user-created "look at the screen"
+// annotations layered on top of transcript segments.
+// -------------------------------------------------------------------
+
+export interface ListMarksOpts {
+  kind?: CheckScreenMarkKind;
+  /** When true, excludes `dismissed` marks server-side. */
+  activeOnly?: boolean;
+}
+
+export async function listMarks(
+  videoId: string,
+  opts: ListMarksOpts = {},
+): Promise<CheckScreenMark[]> {
+  const params = new URLSearchParams();
+  if (opts.kind) params.set("kind", opts.kind);
+  if (opts.activeOnly) params.set("active_only", "true");
+  const qs = params.toString();
+  const url = `/api/videos/${encodeURIComponent(videoId)}/marks${qs ? `?${qs}` : ""}`;
+  const r = await authFetch(url);
+  if (!r.ok) throw new Error(`listMarks ${videoId} failed: ${r.status}`);
+  return r.json();
+}
+
+export interface CreateMarkBody {
+  t_sec: number;
+  segment_id?: number | null;
+  note?: string | null;
+}
+
+export async function createMark(
+  videoId: string,
+  body: CreateMarkBody,
+): Promise<CheckScreenMark> {
+  const r = await authFetch(`/api/videos/${encodeURIComponent(videoId)}/marks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const b = await r.text().catch(() => "");
+    throw new Error(`createMark failed: ${r.status} ${b}`);
+  }
+  return r.json();
+}
+
+export interface UpdateMarkPatch {
+  kind?: CheckScreenMarkKind;
+  note?: string | null;
+}
+
+export async function updateMark(
+  videoId: string,
+  id: number,
+  patch: UpdateMarkPatch,
+): Promise<CheckScreenMark> {
+  const r = await authFetch(
+    `/api/videos/${encodeURIComponent(videoId)}/marks/${id}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!r.ok) {
+    const b = await r.text().catch(() => "");
+    throw new Error(`updateMark failed: ${r.status} ${b}`);
+  }
+  return r.json();
+}
+
+export async function deleteMark(videoId: string, id: number): Promise<void> {
+  const r = await authFetch(
+    `/api/videos/${encodeURIComponent(videoId)}/marks/${id}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok && r.status !== 404) {
+    const b = await r.text().catch(() => "");
+    throw new Error(`deleteMark failed: ${r.status} ${b}`);
+  }
 }
 
 export function extractVideoId(url: string): string | null {

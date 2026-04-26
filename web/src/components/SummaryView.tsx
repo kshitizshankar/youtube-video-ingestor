@@ -63,12 +63,24 @@ export default function SummaryView({
   const meta = analysis._meta;
   const elapsed = fmtMs(meta?.duration_ms);
   const genAgo = relativeTime(meta?.generated_at);
+  const valueProp = analysis.value_prop ?? analysis.summary ?? "";
+  const narrative = analysis.narrative_summary;
   return (
     <div className="analysis-wrap">
-      <div className="summary-card">
-        <h4>Summary · generated</h4>
-        <p>{analysis.summary}</p>
-      </div>
+      {valueProp && (
+        <div className="summary-card">
+          <h4>What you get from this video</h4>
+          <p>{valueProp}</p>
+        </div>
+      )}
+      {narrative && (
+        <div className="summary-card">
+          <h4>The story</h4>
+          {narrative.split(/\n{2,}/).map((para, i) => (
+            <p key={i}>{para}</p>
+          ))}
+        </div>
+      )}
       <div className="summary-card">
         <h4>Key takeaways</h4>
         {analysis.takeaways.map((t, i) => (

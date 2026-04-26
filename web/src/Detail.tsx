@@ -10,8 +10,8 @@ import {
   listIngests,
   openTranscribeStream,
   retryIngest,
-  triggerAnalyze,
 } from "./api";
+import { loadAnalysisDefaults, saveAnalysisDefaults } from "./analysisDefaults";
 import { formatCount, formatSpeakers, formatYtDate } from "./format";
 import AnalysisProgress from "./components/AnalysisProgress";
 import AnalyzeTriggerModal from "./components/AnalyzeTriggerModal";
@@ -91,10 +91,24 @@ export default function Detail({
     model?: string;
   } | null>(null);
   // Remember the last chosen provider/model so the modal preselects it on
-  // the next open — small quality-of-life win for repeat runs.
-  const [lastChosen, setLastChosen] = useState<{ provider: string; model?: string }>(
-    { provider: "claude_cli" },
-  );
+  // the next open — small quality-of-life win for repeat runs. Seeded from
+  // localStorage so Settings-saved defaults flow through even before the
+  // user has run an analysis in this session.
+  const [lastChosen, setLastChosen] = useState<{
+    provider: string;
+    model?: string;
+    skipDialog: boolean;
+  }>(() => {
+    const d = loadAnalysisDefaults();
+    if (d) {
+      return {
+        provider: d.provider,
+        model: d.model ?? undefined,
+        skipDialog: d.skip_dialog,
+      };
+    }
+    return { provider: "claude_cli", skipDialog: false };
+  });
 
   const playerRef = useRef<VideoPlayerHandle>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -173,27 +187,15 @@ export default function Detail({
     return () => { cancelled = true; };
   }, [videoId]);
 
-  // Slice 3 — opening the modal is the ONLY way to kick off an analysis now.
-  // The actual POST + SSE subscription happens inside AnalysisProgress once
-  // we record an `activeRun`.
-  const handleOpenAnalyzeModal = useCallback(() => {
-    setAnalysisError(null);
-    setTriggerOpen(true);
-  }, []);
-
-  const handleAnalyzeSubmit = useCallback(
-    async (provider: string, model: string | undefined) => {
+  // Mounts AnalysisProgress, whose SSE subscription is the SINGLE entry
+  // point that starts the backend worker. Bumping runId remounts it cleanly
+  // for re-runs. There is intentionally no separate POST here: a previous
+  // version posted /analyze AND opened the SSE, which spawned two parallel
+  // analyses per click.
+  const fireAnalysis = useCallback(
+    (provider: string, model: string | undefined) => {
       if (!videoId) return;
-      setLastChosen({ provider, model });
       setAnalysisError(null);
-      try {
-        // Fire-and-forget: the backend spins up a worker. Progress streams
-        // in via the SSE owned by AnalysisProgress below.
-        await triggerAnalyze(videoId, provider, model);
-      } catch (e) {
-        setAnalysisError(String(e));
-        return;
-      }
       setActiveRun((prev) => ({
         runId: (prev?.runId ?? 0) + 1,
         provider,
@@ -203,8 +205,39 @@ export default function Detail({
     [videoId],
   );
 
+  // Slice 3 — the entry point for "the user clicked Analyze". If they have
+  // previously checked "Don't show this again", skip straight to firing the
+  // saved provider/model. Otherwise open the picker modal as before.
+  const handleOpenAnalyzeModal = useCallback(() => {
+    setAnalysisError(null);
+    const d = loadAnalysisDefaults();
+    if (d && d.skip_dialog && d.provider) {
+      fireAnalysis(d.provider, d.model ?? undefined);
+      return;
+    }
+    setTriggerOpen(true);
+  }, [fireAnalysis]);
+
+  const handleAnalyzeSubmit = useCallback(
+    async (provider: string, model: string | undefined, skipDialog: boolean) => {
+      if (!videoId) return;
+      // Persist the chosen defaults regardless of the toggle — this keeps
+      // preselection working on the next open and lets Settings reflect the
+      // most recent choice. The toggle itself controls whether we show the
+      // modal next time.
+      saveAnalysisDefaults({
+        provider,
+        model: model ?? null,
+        skip_dialog: skipDialog,
+      });
+      setLastChosen({ provider, model, skipDialog });
+      fireAnalysis(provider, model);
+    },
+    [videoId, fireAnalysis],
+  );
+
   const handleAnalysisDone = useCallback(
-    async (result: Analysis) => {
+    async (result: Analysis, _meta: { durationMs: number; usage: import("./types").AnalysisUsage }) => {
       if (!videoId) return;
       // Trust the streamed `result`, but also refetch the persisted analysis
       // so `_meta` (generated_at / num_turns / etc.) is populated.
@@ -600,12 +633,6 @@ export default function Detail({
           analysisError={analysisError}
           onRegenerateAnalysis={handleOpenAnalyzeModal}
           regenerating={activeRun !== null}
-          analysisBusy={activeRun !== null}
-          analysisStartedAt={null}
-          analysisPhase=""
-          analysisTokensIn={0}
-          analysisTokensOut={0}
-          analysisCostUsd={0}
           analysisProgressNode={
             activeRun ? (
               <AnalysisProgress
@@ -629,6 +656,7 @@ export default function Detail({
         onSubmit={handleAnalyzeSubmit}
         initialProvider={lastChosen.provider}
         initialModel={lastChosen.model}
+        initialSkipDialog={lastChosen.skipDialog}
       />
     </div>
   );

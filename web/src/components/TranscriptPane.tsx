@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Analysis, Segment, Transcript } from "../types";
-import AnalysisStatus from "./AnalysisStatus";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createMark, deleteMark, listMarks, updateMark } from "../api";
+import type { Analysis, CheckScreenMark, Segment, Transcript } from "../types";
 import ChaptersView from "./ChaptersView";
 import CostsView from "./CostsView";
 import HighlightsView from "./HighlightsView";
@@ -29,16 +29,9 @@ export interface TranscriptPaneProps {
   regenerating?: boolean;
   /** Full transcript object used by the AI Costs observability tab. */
   transcript?: Transcript | null;
-  /** True when Claude is running (either auto post-ingest or manual regen). */
-  analysisBusy?: boolean;
-  analysisStartedAt?: number | null;
-  analysisPhase?: string;
-  analysisTokensIn?: number;
-  analysisTokensOut?: number;
-  analysisCostUsd?: number;
-  /** Slice 3 — when set, this node replaces the legacy AnalysisStatus pill
-   *  and also takes over the summary-tab body while no analysis is resolved.
-   *  Typically `<AnalysisProgress />`. */
+  /** When non-null, the live AnalysisProgress surface from Detail. Rendered
+   *  exactly once — its own SSE subscription is the single thing that kicks
+   *  off the backend analysis worker. */
   analysisProgressNode?: ReactNode;
   /** Map of SPEAKER_XX → user-chosen name, applied everywhere speakers show. */
   speakerNames?: Record<string, string>;
@@ -73,20 +66,94 @@ function findActiveIndex(segments: Segment[], t: number): number {
   return ans;
 }
 
+/** Given a segment, find the marks it owns. A mark "belongs to" a segment if
+ *  its segment_id matches; otherwise by t_sec falling inside [start, end).
+ *  We precompute a per-segment-id map and a sorted list so lookups are O(log n). */
+function groupMarksBySegment(
+  segments: Segment[],
+  marks: CheckScreenMark[],
+): Map<number, CheckScreenMark[]> {
+  const byId = new Map<number, CheckScreenMark[]>();
+  const leftover: CheckScreenMark[] = [];
+  const idSet = new Set(segments.map((s) => s.id));
+  for (const m of marks) {
+    if (m.segment_id != null && idSet.has(m.segment_id)) {
+      const arr = byId.get(m.segment_id) ?? [];
+      arr.push(m);
+      byId.set(m.segment_id, arr);
+    } else {
+      leftover.push(m);
+    }
+  }
+  // For any mark whose segment_id was null or stale, fall back to
+  // timestamp-range matching. Small N; linear scan per segment is fine.
+  for (const m of leftover) {
+    const seg = segments.find(
+      (s) => m.t_sec >= s.start && m.t_sec < s.end,
+    );
+    if (!seg) continue;
+    const arr = byId.get(seg.id) ?? [];
+    arr.push(m);
+    byId.set(seg.id, arr);
+  }
+  return byId;
+}
+
 export default function TranscriptPane(props: TranscriptPaneProps) {
   const {
     segments, currentTime, followLive, onSeek,
     busy = false, phase = "", startedAt = null, lastEventAt = null, duration = null,
     analysis, analysisLoading, analysisError, onRegenerateAnalysis, regenerating,
-    analysisBusy = false, analysisStartedAt = null, analysisPhase = "",
-    analysisTokensIn = 0, analysisTokensOut = 0, analysisCostUsd = 0,
     analysisProgressNode,
     transcript = null,
     speakerNames = {},
   } = props;
 
+  const videoId = transcript?.id ?? null;
   const [tab, setTab] = useState<Tab>("transcript");
+  const [marks, setMarks] = useState<CheckScreenMark[]>([]);
+  const [onlyMarked, setOnlyMarked] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const lastSegEnd = segments.length > 0 ? segments[segments.length - 1].end : 0;
+
+  // Fetch marks whenever the video id changes. Resets local state so stale
+  // marks from the previous video don't bleed into the next render.
+  useEffect(() => {
+    if (!videoId) {
+      setMarks([]);
+      return;
+    }
+    let cancelled = false;
+    listMarks(videoId, { activeOnly: true })
+      .then((ms) => {
+        if (!cancelled) setMarks(ms);
+      })
+      .catch(() => {
+        if (!cancelled) setMarks([]);
+      });
+    return () => { cancelled = true; };
+  }, [videoId]);
+
+  // Refetch when a fresh analysis completes — it may have just written new
+  // codex_suggested marks. `regenerating` is truthy during the run; when it
+  // flips back to false we're clear to pull.
+  const prevRegen = useRef(regenerating);
+  useEffect(() => {
+    if (!videoId) return;
+    if (prevRegen.current && !regenerating) {
+      listMarks(videoId, { activeOnly: true })
+        .then(setMarks)
+        .catch(() => { /* keep stale state */ });
+    }
+    prevRegen.current = regenerating;
+  }, [regenerating, videoId]);
+
+  const marksBySegment = useMemo(
+    () => groupMarksBySegment(segments, marks),
+    [segments, marks],
+  );
+
+  const markedSegmentCount = marksBySegment.size;
 
   const speakerTone = useMemo(() => {
     const m = new Map<string, string>();
@@ -121,6 +188,90 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [activeIdx, followLive, tab]);
 
+  // ---- mark mutation handlers (optimistic, rollback on error) ----
+
+  const handleToggleMark = useCallback(
+    (seg: Segment) => {
+      if (!videoId) return;
+      const existing = marksBySegment.get(seg.id) ?? [];
+      // Prefer removing the user's own mark; leave codex suggestions alone
+      // (they have their own accept/dismiss affordance).
+      const userOwned = existing.find(
+        (m) => m.kind === "user_marked" || m.kind === "user_confirmed",
+      );
+      if (userOwned) {
+        const snapshot = marks;
+        setMarks((cur) => cur.filter((m) => m.id !== userOwned.id));
+        deleteMark(videoId, userOwned.id).catch(() => setMarks(snapshot));
+        return;
+      }
+      // No user mark yet — create one. Optimistically add a placeholder row
+      // with a negative id so we can remove-by-id on failure; swap with the
+      // real row when the POST resolves.
+      const tempId = -Date.now();
+      const now = new Date().toISOString();
+      const placeholder: CheckScreenMark = {
+        id: tempId,
+        video_id: videoId,
+        t_sec: seg.start,
+        segment_id: seg.id,
+        kind: "user_marked",
+        trigger_text: null,
+        signal: null,
+        what_i_expect_to_see: null,
+        priority: null,
+        note: null,
+        analysis_id: null,
+        created_at: now,
+        updated_at: now,
+      };
+      setMarks((cur) => [...cur, placeholder]);
+      createMark(videoId, { t_sec: seg.start, segment_id: seg.id })
+        .then((real) => {
+          setMarks((cur) => cur.map((m) => (m.id === tempId ? real : m)));
+        })
+        .catch(() => {
+          setMarks((cur) => cur.filter((m) => m.id !== tempId));
+        });
+    },
+    [videoId, marksBySegment, marks],
+  );
+
+  const handleAcceptMark = useCallback(
+    (mark: CheckScreenMark) => {
+      if (!videoId) return;
+      const snapshot = marks;
+      setMarks((cur) =>
+        cur.map((m) => (m.id === mark.id ? { ...m, kind: "user_confirmed" } : m)),
+      );
+      updateMark(videoId, mark.id, { kind: "user_confirmed" }).catch(() =>
+        setMarks(snapshot),
+      );
+    },
+    [videoId, marks],
+  );
+
+  const handleDismissMark = useCallback(
+    (mark: CheckScreenMark) => {
+      if (!videoId) return;
+      const snapshot = marks;
+      // Dismiss = filter out locally (activeOnly loads already skip dismissed).
+      setMarks((cur) => cur.filter((m) => m.id !== mark.id));
+      updateMark(videoId, mark.id, { kind: "dismissed" }).catch(() =>
+        setMarks(snapshot),
+      );
+    },
+    [videoId, marks],
+  );
+
+  const visibleSegments = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    let out = segments;
+    if (onlyMarked) out = out.filter((s) => marksBySegment.has(s.id));
+    if (needle.length >= 2) out = out.filter((s) => s.text.toLowerCase().includes(needle));
+    return out;
+  }, [segments, onlyMarked, marksBySegment, searchQuery]);
+
   const TabButton = ({ id, label, count }: { id: Tab; label: string; count?: number }) => (
     <button
       className={`tr-tab ${tab === id ? "active" : ""}`}
@@ -146,9 +297,33 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
         {tab === "transcript" && (
           <div className="tr-search">
             <SearchIcon />
-            <input placeholder="Search in transcript…" />
-            <span className="kbd">Ctrl F</span>
+            <input
+              placeholder="Search in transcript…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="tr-search-clear"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
           </div>
+        )}
+        {tab === "transcript" && videoId && markedSegmentCount > 0 && (
+          <button
+            type="button"
+            className={`tr-marked-filter ${onlyMarked ? "active" : ""}`}
+            onClick={() => setOnlyMarked((v) => !v)}
+            title={onlyMarked ? "Show all segments" : "Show only marked segments"}
+          >
+            <span aria-hidden>{"\u{1F441}"}</span>{" "}
+            Show only marked ({markedSegmentCount})
+          </button>
         )}
         <IngestStatus
           busy={busy}
@@ -159,17 +334,7 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
           lastSegmentEnd={lastSegEnd}
           duration={duration}
         />
-        {analysisProgressNode ?? (
-          <AnalysisStatus
-            running={analysisBusy}
-            startedAt={analysisStartedAt}
-            phase={analysisPhase}
-            error={analysisError}
-            tokensIn={analysisTokensIn}
-            tokensOut={analysisTokensOut}
-            costUsd={analysisCostUsd}
-          />
-        )}
+        {analysisProgressNode}
       </div>
 
       {tab === "transcript" && (
@@ -179,10 +344,22 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
               <span className="dot" /> Waiting for transcript…
             </div>
           )}
-          {segments.map((seg, i) => {
+          {visibleSegments.length === 0 && segments.length > 0 && (
+            <div className="tr-loading">
+              <span className="dot" />{" "}
+              {searchQuery.trim().length >= 2
+                ? `No segments matching "${searchQuery.trim()}".`
+                : onlyMarked
+                  ? "No marked segments yet."
+                  : "No segments to show."}
+            </div>
+          )}
+          {visibleSegments.map((seg) => {
+            const i = segments.indexOf(seg);
             const speaker = seg.speaker ?? "_";
             const tone = speakerTone.get(speaker) ?? "s1";
             const isActive = i === activeIdx;
+            const segMarks = marksBySegment.get(seg.id) ?? [];
             return (
               <div key={seg.id} ref={isActive ? activeRef : undefined}>
                 <TranscriptSegment
@@ -192,6 +369,10 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
                   initials={seg.speaker ? speakerInitials(seg.speaker, speakerNames[seg.speaker]) : "·"}
                   current={isActive}
                   onSeek={onSeek}
+                  marks={segMarks}
+                  onToggleMark={videoId ? handleToggleMark : undefined}
+                  onAcceptMark={videoId ? handleAcceptMark : undefined}
+                  onDismissMark={videoId ? handleDismissMark : undefined}
                 />
               </div>
             );
@@ -201,17 +382,13 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
 
       {tab === "summary" && (
         <div className="transcript-body">
-          {analysisProgressNode && !analysis ? (
-            <div className="analysis-progress-wrap">{analysisProgressNode}</div>
-          ) : (
-            <SummaryView
-              analysis={analysis}
-              loading={analysisLoading}
-              error={analysisError}
-              onRegenerate={onRegenerateAnalysis}
-              regenerating={regenerating}
-            />
-          )}
+          <SummaryView
+            analysis={analysis}
+            loading={analysisLoading}
+            error={analysisError}
+            onRegenerate={onRegenerateAnalysis}
+            regenerating={regenerating}
+          />
         </div>
       )}
 
