@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from . import auth, meta as meta_mod, state, transcripts
+from . import marks as marks_mod
 from . import playlist as playlist_mod
 from . import projects as projects_mod
 from . import queue as queue_mod
@@ -65,6 +66,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Check-screen marks router — annotation layer sitting alongside transcripts.
+# Bound to OUTPUT_DIR at construction time so it shares the same app.db.
+app.include_router(marks_mod.build_router(OUTPUT_DIR))
 
 
 @app.on_event("shutdown")
@@ -343,45 +349,12 @@ def api_search(q: str = Query("", min_length=0), limit: int = Query(60, ge=1, le
     return {"query": q, "results": hits, "truncated": truncated}
 
 
-@app.post("/api/transcripts/{video_id}/analyze", dependencies=[Depends(auth.require_http)])
-async def api_trigger_analyze(video_id: str, body: dict | None = Body(default=None)):
-    """Kick off analysis for an existing transcript via the chosen provider.
-    Body: {provider?: str, model?: str}. Defaults to claude_cli. Returns
-    immediately; watch `/analyze/stream` for live progress."""
-    import threading
-
-    import server.ai as ai_registry
-    from .analyze import stream_analyze_video as _stream_analyze
-
-    body = body or {}
-    provider_name = (body.get("provider") or "claude_cli")
-    model = body.get("model")
-
-    provider = ai_registry.get_provider(provider_name)
-    if provider is None:
-        raise HTTPException(status_code=400, detail=f"unknown provider: {provider_name}")
-    ok, reason = provider.available()
-    if not ok:
-        raise HTTPException(
-            status_code=400, detail=f"provider unavailable: {reason}"
-        )
-
-    # Fire-and-forget: drain the generator in a worker thread. The stream
-    # endpoint is the canonical place to watch progress.
-    def _drain() -> None:
-        try:
-            for _ in _stream_analyze(
-                OUTPUT_DIR,
-                video_id,
-                provider_name=provider_name,
-                model=model,
-            ):
-                pass
-        except Exception:  # pragma: no cover — keep the thread from dying silently
-            log.exception("background analyze drain failed for %s", video_id)
-
-    threading.Thread(target=_drain, daemon=True).start()
-    return {"started": True, "provider": provider_name, "model": model}
+# NOTE: there is intentionally no POST /analyze kickoff endpoint. The SSE
+# stream below is the single entry point for analysis: subscribing to it
+# starts the worker. A separate POST kickoff used to live here, but the
+# frontend always opened the SSE *and* hit the POST, which spawned two
+# parallel runs (two `analyses` rows, two provider invocations, double
+# tokens). One door = one analysis.
 
 
 @app.get("/api/transcripts/{video_id}/analyze/stream", dependencies=[Depends(auth.require_http)])

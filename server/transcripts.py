@@ -36,7 +36,7 @@ _SUMMARY_COLS = [
 ]
 
 
-def _summary_from_row(conn, row) -> dict:
+def _summary_from_row(conn, row, *, project_ids: list[str] | None = None) -> dict:
     out = {k: row[k] for k in _SUMMARY_COLS}
     out["archived"] = bool(out["archived"])
     out["diarized"] = bool(out["diarized"])
@@ -46,6 +46,24 @@ def _summary_from_row(conn, row) -> dict:
             (row["id"],),
         )
     ]
+    out["project_ids"] = project_ids if project_ids is not None else []
+    return out
+
+
+def _bulk_project_ids(conn, video_ids: list[str]) -> dict[str, list[str]]:
+    """One round-trip lookup of project memberships for a batch of videos."""
+    if not video_ids:
+        return {}
+    placeholders = ",".join("?" * len(video_ids))
+    rows = conn.execute(
+        f"SELECT video_id, project_id FROM project_videos "
+        f"WHERE video_id IN ({placeholders}) "
+        f"ORDER BY video_id, project_id",
+        video_ids,
+    ).fetchall()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["video_id"], []).append(r["project_id"])
     return out
 
 
@@ -54,7 +72,11 @@ def _list_by_archived(conn, archived: int) -> list[dict]:
         "SELECT * FROM videos WHERE archived=? ORDER BY created_at DESC",
         (archived,),
     ).fetchall()
-    return [_summary_from_row(conn, r) for r in rows]
+    pid_map = _bulk_project_ids(conn, [r["id"] for r in rows])
+    return [
+        _summary_from_row(conn, r, project_ids=pid_map.get(r["id"], []))
+        for r in rows
+    ]
 
 
 def list_transcripts(out_dir: Path, conn=None) -> list[dict]:

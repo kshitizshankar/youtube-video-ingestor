@@ -58,9 +58,12 @@ def test_run_migrations_is_idempotent(tmp_path: Path) -> None:
     conn = open_connection(db_path)
     try:
         run_migrations(conn)
+        first = [r[0] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
         run_migrations(conn)
-        rows = conn.execute("SELECT name FROM schema_migrations").fetchall()
-        assert [r[0] for r in rows] == ["001_initial"]
+        second = [r[0] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
+        # Second run records nothing new, and at minimum the initial migration is present.
+        assert first == second
+        assert "001_initial" in first
     finally:
         conn.close()
 

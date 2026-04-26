@@ -26,38 +26,103 @@ from .db import open_connection, run_migrations
 log = logging.getLogger(__name__)
 
 
-ANALYZE_PROMPT = r"""Read `transcript.json` in the current directory and produce structured analysis.
+ANALYZE_PROMPT = r"""You are analyzing a video transcript to produce structured insights that help a viewer extract maximum value without re-watching.
 
-Output ONLY a single JSON object. No markdown, no code fences, no prose before or after. The object must match this schema exactly:
+Read `transcript.json` in the current directory. It contains segments with `{id, start, end, text}` (optionally `speaker`). Every timestamp you emit MUST be a real `start` value from a segment in that file — do not invent or round timestamps.
+
+Output ONLY a single JSON object. No markdown, no code fences, no prose before or after. The object must match this schema:
 
 {
-  "summary": "2-3 sentence summary of what the video is about and why it matters",
-  "takeaways": [
-    "<short declarative takeaway>",
-    "<another>"
-  ],
+  "value_prop": "1-3 sentences",
+  "narrative_summary": "long multi-paragraph retelling",
+  "takeaways": ["..."],
   "chapters": [
-    { "start": 0, "title": "<chapter title>" },
-    { "start": 135, "title": "<next chapter>" }
+    { "start": 0, "title": "...", "note": "..." }
   ],
   "highlights": [
     {
-      "start": 245,
-      "end": 289,
-      "speaker": "SPEAKER_00",
-      "quote": "<verbatim quote from the transcript>",
-      "reason": "<one sentence: why this moment stands out>"
+      "start": 245, "end": 289,
+      "speaker": "SPEAKER_00" | null,
+      "quote": "verbatim substring from transcript",
+      "reason": "why this is easy to miss / the non-obvious insight"
+    }
+  ],
+  "check_screen_candidates": [
+    {
+      "t_sec": 421.3,
+      "segment_id": 87,
+      "trigger_text": "short phrase that triggered the flag",
+      "signal": "deictic_reference" | "code_on_screen" | "diagram_drawn" | "matrix_math_shown" | "figure_reference" | "animation_or_transition",
+      "what_i_expect_to_see": "short guess at what's on screen",
+      "priority": "high" | "medium" | "low"
     }
   ]
 }
 
-Rules:
-- 5 to 7 takeaways, each a single crisp sentence.
-- 5 to 10 chapters. First chapter MUST start at 0. Chapters cover the whole video in order.
-- 8 to 15 highlights. Each quote is a direct substring from the transcript's segments. Cite the segment's `start` in seconds.
-- If the transcript is not diarized (segments have no `speaker` field), use null for speaker.
-- All timestamps are integer or float seconds, matching actual `start` / `end` values in transcript.json.
-- Output ONLY the JSON object, nothing else.
+## Goal
+
+Surface genuine insights. **Do NOT compress.** The transcript is cheap; the value is the structure + commentary + flags you layer on top. Favor depth and fidelity over brevity. If a 90-minute video deserves ten paragraphs of narrative, write ten paragraphs. A TLDR here destroys exactly what we are trying to preserve.
+
+## Field guide
+
+### value_prop (1-3 sentences)
+What a viewer walks away with from THIS video that they could not get from reading the notebook, a textbook, or a blog post on the same topic. The payoff. Concrete.
+
+### narrative_summary (multi-paragraph, long)
+A faithful story-like retelling of the video. Preserve the author's actual arc: how they motivate a problem, what they try first, what goes wrong, what aside they make halfway through, what they conclude and why. Keep the reasoning moves, side comments, and "why this, not that" asides. This is what a viewer reads to *internalize* the video without re-watching. Multiple paragraphs. Not a recap.
+
+### takeaways (6-10)
+Crisp, declarative, single-sentence lessons. The things a viewer should remember six months later.
+
+### chapters (6-15)
+Table of contents. First chapter MUST start at 0. Chapters cover the whole video in order, no gaps.
+  - title: short, scannable
+  - note: one sentence describing what actually happens in this section (not a summary of the whole video)
+
+### highlights (10-20) — "What you might have missed"
+These are **not** "why this moment stands out." They are the non-obvious gems — things a casual viewer would miss or mis-understand. Examples of what qualifies:
+  - A subtle mathematical justification glossed over elsewhere
+  - A gotcha the author calls out that you would only catch if paying attention
+  - An aside that reframes the topic
+  - A counterintuitive claim with a compact proof
+  - A "why we don't do X" explanation
+
+Each `reason` should be phrased as "easy to miss because ___" or "the non-obvious point is ___" — NOT "this is important because ___" (too generic).
+
+`quote` must be a direct verbatim substring from a transcript segment's `text`.
+
+### check_screen_candidates (0-30 per video; scale with length)
+Transcript moments where the audio alone is insufficient — where a viewer would need to look at the screen. The transcript is text-only, so you are inferring this from the language.
+
+**Flag when you see:**
+  - Deictic references: "this", "here", "as you see", "right there", "over here"
+  - Code being shown/run: "this cell", "let's run it", "notice the shape", "this line"
+  - Diagrams drawn: "let me draw", "look at the diagram", "this arrow"
+  - Matrix / tensor math shown: "this matrix", "these dimensions", "QK transpose"
+  - Figure references: "Figure 3.2", "the illustration"
+  - Animations/transitions: "watch what happens", "now when we…"
+
+**Do NOT flag:**
+  - Talking-head theory (no visual anchor in the phrase)
+  - References to future sections ("we'll see later", "coming up")
+  - Generic phrases with no visual anchor
+
+**Per-candidate rules:**
+- `t_sec` MUST equal a real `segment.start` in transcript.json.
+- `segment_id` MUST equal that segment's `id`.
+- `trigger_text` is the short phrase (from the segment's text) that triggered the flag.
+- `signal` is the closest enum match from the list above.
+- `what_i_expect_to_see` is a short guess: "the QK matrix heatmap", "a code cell showing `torch.matmul(q, k.T)`", "a diagram with orange attention heads".
+- `priority`: high = audio alone is clearly insufficient; medium = audio gives most but screen adds precision; low = probably fine from audio but screen would confirm.
+
+Skip the array entirely if the video is a talking head with no screen content.
+
+## Constraints
+
+- Output ONLY the JSON object. No prose, no backticks, no markdown fences.
+- All timestamps must match actual `start` / `end` values in transcript.json.
+- If the transcript is not diarized, set `highlights[].speaker` to null.
+- If the transcript has no segments, return the object with empty arrays and empty strings — do not hallucinate content.
 """
 
 
@@ -257,6 +322,28 @@ def stream_analyze_video(
             file_path = _write_result_file(
                 out_dir, video_id, analysis_id, final_result
             )
+            # Auto-ingest check_screen_candidates → check_screen_marks.
+            # Isolated try/except: a schema mismatch or a malformed list must
+            # never fail the analysis run itself. Legacy analyses without the
+            # field are naturally a no-op (None is valid input).
+            try:
+                from .marks import ingest_candidates as _ingest_marks
+                _inserted = _ingest_marks(
+                    out_dir,
+                    video_id,
+                    analysis_id,
+                    final_result.get("check_screen_candidates"),
+                )
+                if _inserted:
+                    log.info(
+                        "analysis %s: inserted %d codex_suggested marks for %s",
+                        analysis_id, _inserted, video_id,
+                    )
+            except Exception as _e:
+                log.warning(
+                    "check-screen candidate ingest failed for analysis %s: %s",
+                    analysis_id, _e,
+                )
             conn.execute(
                 "UPDATE analyses SET status='done', finished_at=?, "
                 "cost_usd=?, tokens_in=?, tokens_out=?, file_path=? WHERE id=?",
