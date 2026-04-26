@@ -8,13 +8,13 @@ import {
   type SearchHit,
   searchTranscripts,
 } from "./api";
-import { listProjects } from "./projects";
+import { useProjects } from "./ProjectsContext";
 import IngestCard from "./components/IngestCard";
 import SearchBar from "./components/SearchBar";
 import SearchResults from "./components/SearchResults";
 import TopBar from "./components/TopBar";
 import VideoRow from "./components/VideoRow";
-import type { Project, TranscriptSummary } from "./types";
+import type { TranscriptSummary } from "./types";
 
 type SortKey = "recent" | "duration" | "title" | "channel";
 
@@ -48,10 +48,14 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [searchTruncated, setSearchTruncated] = useState(false);
   const [searchElapsedMs, setSearchElapsedMs] = useState<number | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [sortOpen, setSortOpen] = useState(false);
   const searchGenRef = useRef(0);
+
+  // Project list comes from the global context — when it gets renamed
+  // anywhere in the app, the chip strip updates automatically.
+  const { projects: ctxProjects, projectsById } = useProjects();
+  const projects = ctxProjects ?? [];
 
   // Project filter is URL-driven so deep links from Project pages preselect it.
   // Empty / missing => "all projects".
@@ -71,23 +75,13 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
     listTranscripts().then(setItems).catch(console.error);
   }, [refreshKey]);
 
-  useEffect(() => {
-    listProjects().then(setProjects).catch(() => setProjects([]));
-  }, [refreshKey]);
-
-  const projectsById = useMemo(() => {
-    const m = new Map<string, Project>();
-    for (const p of projects) m.set(p.id, p);
-    return m;
-  }, [projects]);
-
   // If a previously-selected project disappears (deleted in another tab),
   // silently fall back to "all".
   useEffect(() => {
-    if (selectedProjectId && projects.length > 0 && !projectsById.has(selectedProjectId)) {
+    if (selectedProjectId && ctxProjects && !projectsById.has(selectedProjectId)) {
       setSelectedProject(null);
     }
-  }, [selectedProjectId, projects, projectsById, setSelectedProject]);
+  }, [selectedProjectId, ctxProjects, projectsById, setSelectedProject]);
 
   // Poll active ingests so we can show a "currently ingesting" strip.
   useEffect(() => {

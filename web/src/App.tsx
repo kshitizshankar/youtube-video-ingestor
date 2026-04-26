@@ -17,6 +17,7 @@ import Dashboard from "./Dashboard";
 import Detail from "./Detail";
 import Library from "./Library";
 import Project from "./Project";
+import { ProjectsProvider } from "./ProjectsContext";
 import Settings from "./Settings";
 import type { TranscriptSummary } from "./types";
 
@@ -140,7 +141,9 @@ export default function App() {
     <LoginGate>
       <Tooltip.Provider delayDuration={180} skipDelayDuration={80}>
         <BrowserRouter>
-          <Shell />
+          <ProjectsProvider>
+            <Shell />
+          </ProjectsProvider>
         </BrowserRouter>
       </Tooltip.Provider>
     </LoginGate>

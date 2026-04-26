@@ -7,12 +7,8 @@ import AddVideosModal from "./components/AddVideosModal";
 import IngestCard from "./components/IngestCard";
 import Toast, { type ToastKind } from "./components/Toast";
 import { type IngestState, listIngests } from "./api";
-import {
-  deleteProject,
-  getProject,
-  removeVideoFromProject,
-  updateProject,
-} from "./projects";
+import { getProject } from "./projects";
+import { useProjects } from "./ProjectsContext";
 import type {
   BulkIngestResponse,
   ProjectDetail,
@@ -62,6 +58,14 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
     message: "",
   });
   const [projectIngests, setProjectIngests] = useState<IngestState[]>([]);
+
+  // Mutations funnel through the context so the sidebar/library stay in sync.
+  const {
+    rename: renameProject,
+    remove: deleteProjectCtx,
+    removeVideo: removeProjectVideo,
+    refresh: refreshProjects,
+  } = useProjects();
   // Track video IDs we just submitted so we can keep polling even before the
   // server has fully reflected them in the project's video list.
   const pendingIdsRef = useRef<Set<string>>(new Set());
@@ -124,6 +128,9 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
             handledDoneRef.current.add(i.id);
             if (!triggeredReload) {
               reload();
+              // Newly-finished ingest = new project membership; bump the
+              // shared cache so sidebar/library video_counts reflect it.
+              refreshProjects();
               triggeredReload = true;
             }
           }
@@ -139,45 +146,47 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [projectId, data, reload]);
+  }, [projectId, data, reload, refreshProjects]);
 
   const saveName = useCallback(async () => {
     if (!projectId || !data) return;
     const next = nameDraft.trim();
     if (next && next !== data.project.name) {
       try {
-        await updateProject(projectId, { name: next });
+        // Returns the updated detail; use it directly so the title flips
+        // without a follow-up GET. Context refresh handles sidebar + library.
+        const updated = await renameProject(projectId, next);
+        setData(updated);
       } catch (e) {
         alert(`Rename failed: ${e}`);
       }
     }
     setEditingName(false);
-    reload();
-  }, [projectId, nameDraft, data, reload]);
+  }, [projectId, nameDraft, data, renameProject]);
 
   const handleRemove = useCallback(
     async (vid: string) => {
       try {
-        await removeVideoFromProject(projectId, vid);
+        await removeProjectVideo(projectId, vid);
       } catch (e) {
         alert(`Remove failed: ${e}`);
         return;
       }
       reload();
     },
-    [projectId, reload],
+    [projectId, reload, removeProjectVideo],
   );
 
   const handleDelete = useCallback(async () => {
     setDeleteBusy(true);
     try {
-      await deleteProject(projectId);
+      await deleteProjectCtx(projectId);
       navigate("/");
     } catch (e) {
       alert(`Delete failed: ${e}`);
       setDeleteBusy(false);
     }
-  }, [projectId, navigate]);
+  }, [projectId, navigate, deleteProjectCtx]);
 
   const handleAddSuccess = useCallback(
     (resp: BulkIngestResponse) => {
@@ -186,6 +195,10 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
       // the project detail payload lists them.
       for (const jid of resp.job_ids) pendingIdsRef.current.add(jid);
       reload();
+      // Already-transcribed videos are added to the project synchronously,
+      // bumping video_count. Refresh the projects context so sidebar +
+      // library see the updated count immediately.
+      refreshProjects();
       const started = resp.job_ids.length;
       const alreadyDone = resp.skipped.filter(
         (s) => s.reason === "already_transcribed",
@@ -222,7 +235,7 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
             : "info";
       setToast({ open: true, kind, message });
     },
-    [reload],
+    [reload, refreshProjects],
   );
 
   if (!projectId) return null;

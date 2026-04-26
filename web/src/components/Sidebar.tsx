@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { createProject, listProjects } from "../projects";
-import type { Project } from "../types";
+import { useProjects } from "../ProjectsContext";
 import NewProjectModal from "./NewProjectModal";
 
 export interface SidebarProps {
@@ -17,43 +16,30 @@ function readTheme(): Theme {
   } catch { return "dark"; }
 }
 
-function sortByLastActivity(list: Project[]): Project[] {
-  // Most recent activity first. Projects with no activity sort last.
-  return [...list].sort((a, b) => {
-    const ta = a.last_activity ? Date.parse(a.last_activity) : 0;
-    const tb = b.last_activity ? Date.parse(b.last_activity) : 0;
-    return tb - ta;
-  });
-}
-
 export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
   const loc = useLocation();
   const onDashboard = loc.pathname === "/";
   const onLibrary = loc.pathname.startsWith("/library");
   const onArchive = loc.pathname.startsWith("/archive");
   const [theme, setTheme] = useState<Theme>(readTheme);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+
+  // Single source of truth — list comes from ProjectsContext, mutations
+  // funnel through it so renames/creates/deletes propagate everywhere.
+  const { projects: allProjects, create } = useProjects();
+  const projects = (allProjects ?? []).slice(0, 8);
 
   useEffect(() => {
     document.documentElement.classList.toggle("theme-light", theme === "light");
     try { localStorage.setItem("vvi.theme", theme); } catch {}
   }, [theme]);
 
-  const reloadProjects = useCallback(() => {
-    listProjects()
-      .then((ps) => setProjects(sortByLastActivity(ps).slice(0, 8)))
-      .catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    reloadProjects();
-  }, [reloadProjects]);
-
-  const handleCreate = useCallback(async (name: string, description: string) => {
-    await createProject(name, description || undefined);
-    reloadProjects();
-  }, [reloadProjects]);
+  const handleCreate = useCallback(
+    async (name: string, description: string) => {
+      await create(name, description || undefined);
+    },
+    [create],
+  );
 
   const toggleTheme = () => setTheme((t) => t === "dark" ? "light" : "dark");
 
