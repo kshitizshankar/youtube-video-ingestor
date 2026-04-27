@@ -9,7 +9,7 @@ import {
   searchTranscripts,
 } from "./api";
 import { useProjects } from "./ProjectsContext";
-import IngestCard from "./components/IngestCard";
+import IngestStrip from "./components/IngestStrip";
 import SearchBar from "./components/SearchBar";
 import SearchResults from "./components/SearchResults";
 import TopBar from "./components/TopBar";
@@ -374,33 +374,3 @@ function HamburgerIcon() {
   );
 }
 
-// -----------------------------------------------------------------
-// IngestStrip — compact live progress for all in-flight ingests
-// -----------------------------------------------------------------
-
-function IngestStrip({ ingests }: { ingests: IngestState[] }) {
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const sorted = [...ingests].sort(
-    (a, b) => Number(a.done) - Number(b.done) || b.started_at - a.started_at,
-  );
-  return (
-    <section className="ingest-strip">
-      <header>
-        <span className="label">In progress</span>
-        <span className="count">
-          {ingests.filter((i) => !i.done).length} active ·{" "}
-          {ingests.filter((i) => i.done).length} just finished
-        </span>
-      </header>
-      <div className="ingest-cards">
-        {sorted.map((ing) => (
-          <IngestCard key={ing.id} ing={ing} now={now} />
-        ))}
-      </div>
-    </section>
-  );
-}

@@ -5,6 +5,10 @@ import NewProjectModal from "./NewProjectModal";
 
 export interface SidebarProps {
   libraryCount: number;
+  /** Number of currently-running ingests. Drives the "in progress" pill
+   *  surfaced to the user so they can see at-a-glance that something is
+   *  still going even when they're not on the Library page. */
+  activeIngestCount?: number;
   onNewIngest: () => void;
 }
 
@@ -16,7 +20,7 @@ function readTheme(): Theme {
   } catch { return "dark"; }
 }
 
-export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
+export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewIngest }: SidebarProps) {
   const loc = useLocation();
   const onDashboard = loc.pathname === "/";
   const onLibrary = loc.pathname.startsWith("/library");
@@ -55,6 +59,15 @@ export default function Sidebar({ libraryCount, onNewIngest }: SidebarProps) {
 
       <div className="nav-group">
         <div className="nav-group-title">Library</div>
+        {activeIngestCount > 0 && (
+          <Link to="/library" className="nav-item nav-item-live" title="View live progress">
+            <span className="nav-pulse" aria-hidden>
+              <span className="pulse-core" />
+              <span className="pulse-ring" />
+            </span>
+            <span>{activeIngestCount} in progress</span>
+          </Link>
+        )}
         <Link to="/" className={`nav-item ${onDashboard ? "active" : ""}`}>
           <DashIcon />
           <span>Dashboard</span>

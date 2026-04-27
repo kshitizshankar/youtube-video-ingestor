@@ -37,6 +37,32 @@ export async function patchMeta(id: string, patch: Partial<VideoMeta>): Promise<
   return r.json();
 }
 
+export interface VideoFolderStatus {
+  exists: boolean;
+  is_empty: boolean;
+  has_transcript: boolean;
+  has_audio: boolean;
+  files: string[];
+}
+
+/** Inspect what's on disk for a video — used by Detail to detect the
+ *  "started ingest but never finished" orphan state. */
+export async function getVideoFolderStatus(id: string): Promise<VideoFolderStatus> {
+  const r = await authFetch(`/api/transcripts/${id}/folder`);
+  if (!r.ok) throw new Error(`folder ${id} failed: ${r.status}`);
+  return r.json();
+}
+
+/** Remove the per-video folder when it's an orphan from a crashed ingest.
+ *  Server refuses (409) if a transcript exists or an ingest is running. */
+export async function discardOrphanFolder(id: string): Promise<void> {
+  const r = await authFetch(`/api/transcripts/${id}/folder`, { method: "DELETE" });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`discardOrphanFolder failed: ${r.status} ${body}`);
+  }
+}
+
 /** Returns parsed analysis.json, or null if it doesn't exist yet (404). */
 export async function getAnalysis(id: string): Promise<Analysis | null> {
   const r = await authFetch(`/api/transcripts/${id}/analysis`);

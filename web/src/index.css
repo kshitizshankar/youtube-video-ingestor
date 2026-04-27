@@ -247,6 +247,40 @@ a { color: inherit; text-decoration: none; }
 .nav-item.active .count { color: rgba(255, 255, 255, 0.85); }
 .nav-item svg { flex-shrink: 0; }
 
+/* "Live" sidebar pill — only rendered when at least one ingest is running.
+   Uses the same pulsing dot pattern as the analyze progress surface for a
+   consistent "something is happening" cue across the app. */
+.nav-item-live {
+  background: color-mix(in oklch, var(--accent) 10%, var(--bg-2));
+  color: var(--ink);
+  border: 1px solid color-mix(in oklch, var(--accent) 25%, var(--line));
+  font-weight: 500;
+}
+.nav-item-live:hover {
+  background: color-mix(in oklch, var(--accent) 18%, var(--bg-2));
+}
+.nav-pulse {
+  position: relative;
+  width: 10px; height: 10px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.nav-pulse .pulse-core {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background-image: var(--gradient);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.nav-pulse .pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  opacity: 0.7;
+  animation: progress-ring 1.6s ease-out infinite;
+}
+
 .tag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 .sidebar-bottom {
@@ -2034,6 +2068,60 @@ a.vm-channel:hover {
   background: var(--bg-3);
   color: var(--ink);
   border-color: var(--line-2);
+}
+
+/* ==============================================================
+   ORPHAN BANNER (Detail page, when an ingest folder exists with
+   no transcript and no active job — surfaces Retry / Discard).
+   ============================================================== */
+
+.orphan-banner {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warning, #f5a623) 10%, var(--bg-2));
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.orphan-banner-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 240px;
+}
+.orphan-banner-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--warning, #f5a623);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.orphan-banner-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.orphan-banner-detail {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.orphan-files {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+}
+.orphan-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* ==============================================================

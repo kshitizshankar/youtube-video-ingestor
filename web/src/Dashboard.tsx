@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import TopBar from "./components/TopBar";
+import IngestStrip from "./components/IngestStrip";
 import ProjectCard from "./components/ProjectCard";
 import StatsStrip from "./components/StatsStrip";
 import NewProjectModal from "./components/NewProjectModal";
@@ -9,6 +10,7 @@ import TopTagsCard from "./components/TopTagsCard";
 import LongestVideosCard from "./components/LongestVideosCard";
 import RecentlyAnalyzedCard from "./components/RecentlyAnalyzedCard";
 import { createProject, getStats, listProjects } from "./projects";
+import { useActiveIngests } from "./useActiveIngests";
 import type { Project, Stats } from "./types";
 
 export interface DashboardProps {
@@ -25,6 +27,7 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const ingests = useActiveIngests();
   const reloadRef = useRef<() => void>(() => {});
 
   const reload = useCallback(() => {
@@ -105,6 +108,7 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
         }
       />
       <div className="dash-body">
+        <IngestStrip ingests={ingests} />
         <section className="dash-hero">
           <h1>Your projects</h1>
           <div className="dash-hero-actions">

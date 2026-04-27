@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -19,7 +19,10 @@ import Library from "./Library";
 import Project from "./Project";
 import { ProjectsProvider } from "./ProjectsContext";
 import Settings from "./Settings";
+import { useActiveIngests } from "./useActiveIngests";
 import type { TranscriptSummary } from "./types";
+
+const BASE_TITLE = "Vidan";
 
 /** Holds shell state (sidebar count, ingest modal, pending ingest URL). */
 function Shell() {
@@ -74,10 +77,36 @@ function Shell() {
 
   const toggleDrawer = useCallback(() => setDrawerOpen((v) => !v), []);
 
+  // Live count of in-flight ingests, polled at the top level so it's
+  // visible everywhere: sidebar badge, browser tab title, and (via
+  // refreshKey when an ingest finishes) the library/dashboard counts.
+  const ingests = useActiveIngests();
+  const activeIngestCount = ingests.filter((i) => !i.done).length;
+
+  // Tab title reflects active jobs so a backgrounded tab still tells the
+  // user something is running. Reset to the base title when nothing is
+  // active so the user isn't left with a stale "(N)" prefix.
+  useEffect(() => {
+    document.title = activeIngestCount > 0
+      ? `(${activeIngestCount}) ${BASE_TITLE}`
+      : BASE_TITLE;
+    return () => { document.title = BASE_TITLE; };
+  }, [activeIngestCount]);
+
+  // When an ingest transitions to done, bump refreshKey so consumers that
+  // key on it (Library, Sidebar count) refetch their lists.
+  const prevDoneCount = useRef(0);
+  useEffect(() => {
+    const doneCount = ingests.filter((i) => i.done).length;
+    if (doneCount > prevDoneCount.current) refresh();
+    prevDoneCount.current = doneCount;
+  }, [ingests, refresh]);
+
   return (
     <div className={`app-shell${drawerOpen ? " drawer-open" : ""}`}>
       <Sidebar
         libraryCount={items.length}
+        activeIngestCount={activeIngestCount}
         onNewIngest={() => setIngestOpen(true)}
       />
       <button

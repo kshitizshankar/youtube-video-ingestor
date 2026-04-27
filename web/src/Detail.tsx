@@ -3,13 +3,16 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   archiveVideo,
   cancelIngest,
+  discardOrphanFolder,
   getAnalysis,
   getMeta,
   getTranscript,
+  getVideoFolderStatus,
   type IngestState,
   listIngests,
   openTranscribeStream,
   retryIngest,
+  type VideoFolderStatus,
 } from "./api";
 import { loadAnalysisDefaults, saveAnalysisDefaults } from "./analysisDefaults";
 import { formatCount, formatSpeakers, formatYtDate } from "./format";
@@ -120,6 +123,12 @@ export default function Detail({
   const [ingestRecord, setIngestRecord] = useState<IngestState | null>(null);
   const [retryPending, setRetryPending] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
+  // Detects the "started ingest but never finished" orphan state — folder
+  // exists on disk, no transcript inside, no active /api/ingests record.
+  // Surfaces a Retry / Discard banner so the user isn't stuck on a page
+  // saying "Waiting for transcript" forever.
+  const [orphan, setOrphan] = useState<VideoFolderStatus | null>(null);
+  const [discardPending, setDiscardPending] = useState(false);
 
   // Resizable transcript / video split (persisted). Only used on desktop —
   // on mobile the detail body stacks vertically and the handle is hidden.
@@ -184,8 +193,25 @@ export default function Detail({
       .then((m) => { if (!cancelled) setMeta(m); })
       .catch(() => { /* 404 before first transcript write */ });
 
+    setOrphan(null);
     return () => { cancelled = true; };
   }, [videoId]);
+
+  // Orphan detection: when no transcript loaded AND no active ingest record,
+  // peek at the folder on disk. If a folder exists but has no transcript,
+  // we're looking at a crashed-mid-ingest state and the user gets a recovery
+  // banner. Re-runs whenever those signals change.
+  useEffect(() => {
+    if (!videoId) return;
+    if (transcript) { setOrphan(null); return; }
+    if (ingestRecord && !ingestRecord.done) { setOrphan(null); return; }
+    if (pendingIngestUrl) { setOrphan(null); return; }
+    let cancelled = false;
+    getVideoFolderStatus(videoId)
+      .then((s) => { if (!cancelled) setOrphan(s.exists && !s.has_transcript ? s : null); })
+      .catch(() => { if (!cancelled) setOrphan(null); });
+    return () => { cancelled = true; };
+  }, [videoId, transcript, ingestRecord, pendingIngestUrl]);
 
   // Mounts AnalysisProgress, whose SSE subscription is the SINGLE entry
   // point that starts the backend worker. Bumping runId remounts it cleanly
@@ -331,8 +357,12 @@ export default function Detail({
     if (!videoId) return;
     setRetryPending(true);
     try {
-      await retryIngest(videoId, ingestRecord?.url ?? undefined);
-      // Poll will pick up the new record on the next tick.
+      // Crashed-ingest case: registry was wiped, so ingestRecord?.url is
+      // null. The canonical YouTube URL is derivable from the videoId — let
+      // the server use that instead of erroring.
+      const fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      await retryIngest(videoId, ingestRecord?.url ?? fallbackUrl);
+      setOrphan(null);
       setBusy(true);
       setStatus("Retry queued");
       setStartedAt(Date.now());
@@ -342,6 +372,20 @@ export default function Detail({
       setRetryPending(false);
     }
   }, [videoId, ingestRecord?.url]);
+
+  const handleDiscardOrphan = useCallback(async () => {
+    if (!videoId) return;
+    setDiscardPending(true);
+    try {
+      await discardOrphanFolder(videoId);
+      setOrphan(null);
+      navigate("/");
+    } catch (e) {
+      alert(`Discard failed: ${e}`);
+    } finally {
+      setDiscardPending(false);
+    }
+  }, [videoId, navigate]);
 
   const handleCancelIngest = useCallback(async () => {
     if (!videoId) return;
@@ -547,6 +591,44 @@ export default function Detail({
               </span>
             </>
           )}
+        </div>
+      )}
+      {orphan && (
+        <div role="alert" className="orphan-banner">
+          <div className="orphan-banner-body">
+            <span className="orphan-banner-icon" aria-hidden>!</span>
+            <div>
+              <div className="orphan-banner-title">Previous ingest didn't finish</div>
+              <div className="orphan-banner-detail">
+                A folder for this video exists but it's empty (no transcript was written).
+                Most likely the server was restarted mid-ingest. The original job's record is gone.
+                {orphan.files.length > 0 && (
+                  <>
+                    {" "}Partial files: <span className="orphan-files">{orphan.files.join(", ")}</span>.
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="orphan-banner-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleRetryIngest}
+              disabled={retryPending}
+            >
+              {retryPending ? "Starting…" : "Retry ingest"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={handleDiscardOrphan}
+              disabled={discardPending}
+              title="Delete the empty folder and go back"
+            >
+              {discardPending ? "Discarding…" : "Discard"}
+            </button>
+          </div>
         </div>
       )}
       <div
