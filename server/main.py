@@ -271,6 +271,59 @@ def api_cancel_ingest(video_id: str):
     return {"cancel_requested": True, "video_id": video_id}
 
 
+@app.get("/api/transcripts/{video_id}/folder", dependencies=[Depends(auth.require_http)])
+def api_video_folder_status(video_id: str):
+    """What's actually on disk for this video. Lets the Detail page detect
+    the "started ingest but never finished" case (folder exists, empty or
+    missing transcript.json, and no active /api/ingests record either) so
+    it can surface a Retry / Discard affordance instead of just sitting
+    on 'Waiting for transcript' forever."""
+    folder = video_dir(OUTPUT_DIR, video_id)
+    if not folder.exists():
+        return {
+            "exists": False,
+            "is_empty": False,
+            "has_transcript": False,
+            "has_audio": False,
+            "files": [],
+        }
+    try:
+        names = [p.name for p in folder.iterdir()]
+    except OSError:
+        names = []
+    return {
+        "exists": True,
+        "is_empty": len(names) == 0,
+        "has_transcript": "transcript.json" in names,
+        "has_audio": any(n.startswith("audio.") for n in names),
+        "files": names,
+    }
+
+
+@app.delete("/api/transcripts/{video_id}/folder", dependencies=[Depends(auth.require_http)])
+def api_discard_orphan_folder(video_id: str):
+    """Remove the per-video folder when it's an orphan from a crashed
+    ingest. Refuses if a transcript exists or an ingest is in flight, so
+    a stray DELETE can't trash real data."""
+    if transcripts.read_transcript(OUTPUT_DIR, video_id) is not None:
+        raise HTTPException(status_code=409, detail="folder has a real transcript; archive then delete instead")
+    rec = state.get(video_id)
+    if rec is not None and not rec.done:
+        raise HTTPException(status_code=409, detail="ingest is currently running")
+
+    folder = video_dir(OUTPUT_DIR, video_id)
+    if not folder.exists():
+        return {"removed": False, "reason": "folder does not exist"}
+    import shutil
+    try:
+        shutil.rmtree(folder)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"could not remove folder: {e}")
+    # Best-effort: clear any stale registry entry too.
+    state.drop(video_id)
+    return {"removed": True}
+
+
 @app.get("/api/transcripts/{video_id}/meta", dependencies=[Depends(auth.require_http)])
 def api_get_meta(video_id: str):
     # Existence check: only return meta if the video has a transcript.
