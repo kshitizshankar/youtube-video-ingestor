@@ -198,7 +198,13 @@ def list_active() -> list[dict]:
         mutated = False
         for k in list(_INGESTS.keys()):
             st = _INGESTS[k]
-            if st.done and (now - st.last_event_at) > _DONE_TTL_SEC:
+            # Clean completions disappear from the active strip after the
+            # brief "just finished" window — by then the row is in the
+            # transcripts list and the user has navigated to the video.
+            # Errored / cancelled rows STAY until explicitly dropped via
+            # DELETE /api/ingests/{id}, so the user can see what happened
+            # even if they weren't watching during the failure window.
+            if st.done and not st.error and (now - st.last_event_at) > _DONE_TTL_SEC:
                 del _INGESTS[k]
                 mutated = True
                 continue
