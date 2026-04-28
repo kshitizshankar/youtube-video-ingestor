@@ -126,11 +126,11 @@ export default function AnalyzeTriggerModal({
         <div className="atm-header">
           <div className="atm-eyebrow">
             <span className="atm-eyebrow-dot" />
-            AI analysis
+            ai analysis
           </div>
-          <h2 id="analyze-trigger-title">Understand this video</h2>
+          <h2 id="analyze-trigger-title">understand this video.</h2>
           <p className="atm-sub">
-            Pick a provider and model. Summary, highlights, and chapters
+            pick a provider and model. summary, highlights, and chapters
             stream in live as the model reads the transcript.
           </p>
         </div>
@@ -138,7 +138,7 @@ export default function AnalyzeTriggerModal({
         {providers === null && !loadError && (
           <div className="atm-loading" role="status">
             <span className="atm-spinner" aria-hidden />
-            <span>Checking providers…</span>
+            <span>checking providers...</span>
           </div>
         )}
 
@@ -161,7 +161,7 @@ export default function AnalyzeTriggerModal({
         {providers !== null && anyAvailable && (
           <form onSubmit={submit} className="atm-form">
             <fieldset className="atm-field">
-              <legend>Provider</legend>
+              <legend>provider</legend>
               <div className="atm-provider-grid" role="radiogroup">
                 {providers.map((p) => {
                   const isActive = p.name === provider;
@@ -204,11 +204,11 @@ export default function AnalyzeTriggerModal({
             </fieldset>
 
             <label className="atm-select-label">
-              Model
+              model
               <span className="hint">
                 {selected?.models.length
-                  ? "— override the provider default"
-                  : "— provider picks its own"}
+                  ? "- override the provider default"
+                  : "- provider picks its own"}
               </span>
               <select
                 value={model}
@@ -216,7 +216,7 @@ export default function AnalyzeTriggerModal({
                 disabled={!selected?.available || (selected?.models.length ?? 0) === 0}
                 className="atm-select"
               >
-                <option value="">Default</option>
+                <option value="">default</option>
                 {selected?.models.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -250,7 +250,7 @@ export default function AnalyzeTriggerModal({
                   disabled={submitting}
                   style={{ margin: 0 }}
                 />
-                <span>Don&rsquo;t show this again</span>
+                <span>don&rsquo;t show this again</span>
               </label>
               <span
                 style={{
@@ -259,19 +259,19 @@ export default function AnalyzeTriggerModal({
                   marginLeft: 24,
                 }}
               >
-                You can change this anytime in Settings.
+                you can change this anytime in settings.
               </span>
             </div>
 
             <div className="modal-actions atm-actions">
               <button type="button" onClick={onClose} disabled={submitting}>
-                Cancel
+                cancel
               </button>
               <button
                 type="submit"
                 disabled={submitting || !selected?.available}
               >
-                {submitting ? "Starting…" : "Run analysis"}
+                {submitting ? "starting..." : "run analysis"}
               </button>
             </div>
           </form>

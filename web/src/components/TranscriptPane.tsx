@@ -288,17 +288,17 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
     <section className="transcript-pane">
       <div className="transcript-top">
         <div className="transcript-tabs">
-          <TabButton id="transcript" label="Transcript" />
-          <TabButton id="summary" label="Summary" />
-          <TabButton id="highlights" label="Highlights" count={analysis?.highlights.length} />
-          <TabButton id="chapters" label="Chapters" count={analysis?.chapters.length} />
-          <TabButton id="costs" label="AI Costs" />
+          <TabButton id="transcript" label="transcript" />
+          <TabButton id="summary" label="summary" />
+          <TabButton id="highlights" label="highlights" count={analysis?.highlights.length} />
+          <TabButton id="chapters" label="chapters" count={analysis?.chapters.length} />
+          <TabButton id="costs" label="ai costs" />
         </div>
         {tab === "transcript" && (
           <div className="tr-search">
             <SearchIcon />
             <input
-              placeholder="Search in transcript…"
+              placeholder="search in transcript..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -322,7 +322,7 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
             title={onlyMarked ? "Show all segments" : "Show only marked segments"}
           >
             <span aria-hidden>{"\u{1F441}"}</span>{" "}
-            Show only marked ({markedSegmentCount})
+            only marked ({markedSegmentCount})
           </button>
         )}
         <IngestStatus
@@ -341,17 +341,17 @@ export default function TranscriptPane(props: TranscriptPaneProps) {
         <div className="transcript-body" ref={bodyRef}>
           {segments.length === 0 && (
             <div className="tr-loading">
-              <span className="dot" /> Waiting for transcript…
+              <span className="dot" /> waiting for transcript...
             </div>
           )}
           {visibleSegments.length === 0 && segments.length > 0 && (
             <div className="tr-loading">
               <span className="dot" />{" "}
               {searchQuery.trim().length >= 2
-                ? `No segments matching "${searchQuery.trim()}".`
+                ? `no segments matching "${searchQuery.trim()}".`
                 : onlyMarked
-                  ? "No marked segments yet."
-                  : "No segments to show."}
+                  ? "no marked segments yet."
+                  : "no segments to show."}
             </div>
           )}
           {visibleSegments.map((seg) => {

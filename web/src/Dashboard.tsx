@@ -88,7 +88,7 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
   return (
     <div className="main dashboard">
       <TopBar
-        title="Dashboard"
+        title="dashboard"
         leading={
           onMenuToggle && (
             <button
@@ -102,27 +102,27 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
           )
         }
         actions={
-          <button className="btn btn-primary" onClick={onAdd}>
-            <PlusIcon /> Add
+          <button className="btn btn-accent" onClick={onAdd}>
+            <PlusIcon /> add video
           </button>
         }
       />
       <div className="dash-body">
         <IngestStrip ingests={ingests} />
         <section className="dash-hero">
-          <h1>Your projects</h1>
+          <h1>your projects.</h1>
           <div className="dash-hero-actions">
             <button className="primary" onClick={() => setModalOpen(true)}>
-              New project
+              new project
             </button>
-            <button onClick={onAdd}>Quick ingest</button>
+            <button onClick={onAdd}>quick ingest</button>
           </div>
         </section>
 
         <section className="dash-projects">
           {projects.length === 0 ? (
             <div className="empty">
-              No projects yet. Create one to start grouping videos.
+              no projects yet. create one to start grouping videos.
             </div>
           ) : (
             <div className="project-grid">
@@ -138,8 +138,8 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
         {stats && (
           <section className="dash-analytics">
             <div className="dash-analytics-head">
-              <span className="dash-analytics-kicker">Readings</span>
-              <h2>What&rsquo;s in your library</h2>
+              <span className="dash-analytics-kicker">readings</span>
+              <h2>what&rsquo;s in your library.</h2>
             </div>
             <div className="analytics-grid">
               <TopChannelsCard channels={stats.by_channel} />

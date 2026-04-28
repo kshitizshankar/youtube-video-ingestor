@@ -16,8 +16,11 @@ type Theme = "dark" | "light";
 
 function readTheme(): Theme {
   try {
-    return (localStorage.getItem("vvi.theme") as Theme) || "dark";
-  } catch { return "dark"; }
+    // Light is the default OK Human surface (paper + plum). The previous
+    // build defaulted to dark; respect any explicitly saved choice but
+    // otherwise fall back to light so first-paint matches the brand.
+    return (localStorage.getItem("vvi.theme") as Theme) || "light";
+  } catch { return "light"; }
 }
 
 export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewIngest }: SidebarProps) {
@@ -50,15 +53,14 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <span className="brand-mark">V</span>
-        <div>
-          <div className="brand-name">Vidan</div>
-          <div className="brand-sub">Video Analyzer</div>
-        </div>
+        <span className="sidebar-wordmark" aria-label="vidan.">vidan</span>
+        <span className="sidebar-tagline">
+          for humans who don&rsquo;t have 90 min
+        </span>
       </div>
 
       <div className="nav-group">
-        <div className="nav-group-title">Library</div>
+        <div className="nav-group-title">library</div>
         {activeIngestCount > 0 && (
           <Link to="/library" className="nav-item nav-item-live" title="View live progress">
             <span className="nav-pulse" aria-hidden>
@@ -70,11 +72,11 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
         )}
         <Link to="/" className={`nav-item ${onDashboard ? "active" : ""}`}>
           <DashIcon />
-          <span>Dashboard</span>
+          <span>dashboard</span>
         </Link>
         <Link to="/library" className={`nav-item ${onLibrary ? "active" : ""}`}>
           <LibIcon />
-          <span>All videos</span>
+          <span>all videos</span>
           <span className="count">{libraryCount}</span>
         </Link>
         <Link
@@ -82,17 +84,17 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
           className={`nav-item ${onArchive ? "active" : ""}`}
         >
           <ArchiveIcon />
-          <span>Archive</span>
+          <span>archive</span>
         </Link>
         <button className="nav-item" onClick={onNewIngest}>
           <PlusIcon />
-          <span>Add video</span>
-          <span className="count">Ctrl N</span>
+          <span>add video</span>
+          <span className="count">CTRL N</span>
         </button>
       </div>
 
       <div className="nav-group">
-        <div className="nav-group-title">Projects</div>
+        <div className="nav-group-title">projects</div>
         {projects.map((p) => {
           const active = loc.pathname === `/p/${p.id}`;
           return (
@@ -109,15 +111,15 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
         })}
         <button className="nav-item" onClick={() => setModalOpen(true)}>
           <PlusIcon />
-          <span>New project</span>
+          <span>new project</span>
         </button>
       </div>
 
       <div className="sidebar-bottom">
         <span className="avatar">K</span>
         <div className="user">
-          <div className="uname">You</div>
-          <div className="ustack">Local stack</div>
+          <div className="uname">you</div>
+          <div className="ustack">local stack</div>
         </div>
         <Link
           to="/settings"

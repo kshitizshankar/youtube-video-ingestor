@@ -57,9 +57,10 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
     <div className="ingest-modal" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <form className="ingest-card" onSubmit={handle}>
         <header>
-          <h3>Add a video.</h3>
+          <h3>add a video.</h3>
           <div className="hint">
-            Pasted URL → downloaded → transcribed → ready to chat. Everything runs locally.
+            paste url &rarr; downloaded &rarr; transcribed &rarr; ready to chat.
+            everything runs locally.
           </div>
         </header>
 
@@ -151,13 +152,13 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
         )}
 
         <div className="ingest-footer">
-          <span className="est">Processing locally · stays on this machine</span>
+          <span className="est">processing locally &middot; stays on this machine</span>
           <div className="actions">
             <button type="button" className="btn btn-ghost" onClick={onClose}>
-              Cancel
+              cancel
             </button>
-            <button type="submit" className="btn btn-primary" disabled={!url.trim()}>
-              Ingest
+            <button type="submit" className="btn btn-accent" disabled={!url.trim()}>
+              ingest
             </button>
           </div>
         </div>

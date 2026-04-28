@@ -245,8 +245,8 @@ export default function AnalysisProgress({
     return (
       <div className="analysis-progress is-done" role="status">
         <div className="progress-summary">
-          <span className="ps-check" aria-hidden>✓</span>
-          <span className="ps-label">Done in {fmtRel(summary.durationMs)}</span>
+          <span className="ps-check" aria-hidden>+</span>
+          <span className="ps-label">done in {fmtRel(summary.durationMs)}</span>
           <span className="ps-sep">·</span>
           <span className="ps-meta">
             {fmtTokens(summary.tokensIn)} in · {fmtTokens(summary.tokensOut)} out
@@ -265,12 +265,12 @@ export default function AnalysisProgress({
         <div className="progress-error">
           <div className="pe-head">
             <span className="pe-icon" aria-hidden>!</span>
-            <span className="pe-title">Analysis failed</span>
+            <span className="pe-title">analysis failed.</span>
           </div>
           <div className="error-message">{errorMsg ?? "unknown error"}</div>
           {onRetry && (
             <button type="button" className="btn pe-retry" onClick={onRetry}>
-              Try again
+              try again
             </button>
           )}
         </div>
@@ -288,7 +288,7 @@ export default function AnalysisProgress({
           <span className="pulse-ring" />
         </span>
         <span className="progress-title">
-          {status === "cancelling" ? "Cancelling…" : "Analyzing transcript"}
+          {status === "cancelling" ? "cancelling..." : "analyzing transcript"}
         </span>
         <span className="progress-elapsed">{fmtRel(elapsedMs)}</span>
       </div>
@@ -296,8 +296,8 @@ export default function AnalysisProgress({
       <ul className="progress-stages" aria-label="Analysis stages">
         {stages.length === 0 && (
           <li className="progress-stage is-waiting">
-            <span className="stage-time">—</span>
-            <span className="stage-label">Waking up the model…</span>
+            <span className="stage-time">-</span>
+            <span className="stage-label">waking up the model...</span>
           </li>
         )}
         {stages.map((s, i) => {
@@ -345,7 +345,7 @@ export default function AnalysisProgress({
           onClick={handleCancel}
           disabled={status === "cancelling"}
         >
-          {status === "cancelling" ? "Cancelling…" : "Cancel"}
+          {status === "cancelling" ? "cancelling..." : "cancel"}
         </button>
       </div>
     </div>

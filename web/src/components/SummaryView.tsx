@@ -45,15 +45,15 @@ export default function SummaryView({
   analysis, loading, onRegenerate, regenerating, error,
 }: SummaryViewProps) {
   if (loading) {
-    return <div className="tr-loading"><span className="dot" /> Loading analysis…</div>;
+    return <div className="tr-loading"><span className="dot" /> loading analysis...</div>;
   }
   if (!analysis) {
     return (
       <div className="analysis-empty">
-        <p>No summary yet.</p>
+        <p>no summary yet.</p>
         {onRegenerate && (
-          <button className="btn btn-primary" onClick={onRegenerate} disabled={regenerating}>
-            {regenerating ? "Generating…" : "Generate now"}
+          <button className="btn btn-accent" onClick={onRegenerate} disabled={regenerating}>
+            {regenerating ? "generating..." : "generate now"}
           </button>
         )}
         {error && <div className="analysis-err">{error}</div>}
@@ -69,20 +69,20 @@ export default function SummaryView({
     <div className="analysis-wrap">
       {valueProp && (
         <div className="summary-card">
-          <h4>What you get from this video</h4>
+          <h4>what you get from this video</h4>
           <p>{valueProp}</p>
         </div>
       )}
       {narrative && (
         <div className="summary-card">
-          <h4>The story</h4>
+          <h4>the story</h4>
           {narrative.split(/\n{2,}/).map((para, i) => (
             <p key={i}>{para}</p>
           ))}
         </div>
       )}
       <div className="summary-card">
-        <h4>Key takeaways</h4>
+        <h4>key takeaways</h4>
         {analysis.takeaways.map((t, i) => (
           <div className="takeaway" key={i}>
             <span className="n">{String(i + 1).padStart(2, "0")}</span>
@@ -93,7 +93,7 @@ export default function SummaryView({
       <div className="analysis-foot">
         {meta && (
           <div className="analysis-meta" title={meta.generated_at || ""}>
-            {genAgo && <span>Generated {genAgo}</span>}
+            {genAgo && <span>generated {genAgo}</span>}
             {elapsed && (<><span className="sep">·</span><span>{elapsed}</span></>)}
             {typeof meta.num_turns === "number" && meta.num_turns > 0 && (
               <><span className="sep">·</span><span>{meta.num_turns} turn{meta.num_turns === 1 ? "" : "s"}</span></>
@@ -111,7 +111,7 @@ export default function SummaryView({
         )}
         {onRegenerate && (
           <button className="btn" onClick={onRegenerate} disabled={regenerating}>
-            {regenerating ? "Regenerating…" : "↻ Regenerate"}
+            {regenerating ? "regenerating..." : "regenerate"}
           </button>
         )}
       </div>

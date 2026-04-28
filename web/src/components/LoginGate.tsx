@@ -66,25 +66,25 @@ export default function LoginGate({ children }: LoginGateProps) {
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={handleSubmit}>
-        <div className="gate-mark">V</div>
+        <div className="gate-mark" aria-label="vidan.">vidan</div>
         <h2>
-          Vidan<em>.</em>
+          unlock<em>.</em>
         </h2>
         <p className="gate-sub">
-          Video Analyzer · password-protected instance. Enter your credentials
-          to continue.
+          for humans who don&rsquo;t have 90 min. password-protected instance —
+          enter your credentials to continue.
         </p>
         <label className="gate-field">
-          <span>Username</span>
+          <span>username</span>
           <input name="user" type="text" autoComplete="username" autoFocus spellCheck={false} />
         </label>
         <label className="gate-field">
-          <span>Password</span>
+          <span>password</span>
           <input name="pass" type="password" autoComplete="current-password" />
         </label>
         {err && <div className="gate-err">{err}</div>}
         <button type="submit" className="btn btn-primary gate-btn" disabled={submitting}>
-          {submitting ? "Checking…" : "Unlock"}
+          {submitting ? "checking…" : "unlock"}
         </button>
         {phase === "error" && !err && (
           <button
@@ -92,7 +92,7 @@ export default function LoginGate({ children }: LoginGateProps) {
             className="btn btn-ghost"
             onClick={() => { clearToken(); probe(); }}
           >
-            Retry
+            retry
           </button>
         )}
       </form>

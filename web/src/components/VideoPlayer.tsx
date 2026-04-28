@@ -1,18 +1,23 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { loadYouTubeAPI, type YTPlayerInstance } from "../youtubePlayer";
 
-export interface VideoPlayerHandle {
+/** Minimal interface both VideoPlayer and AudioPlayer expose — Detail.tsx
+ *  holds a ref of this shape so it can drive seeks regardless of which
+ *  player is mounted for the current video's source. */
+export interface MediaPlayerHandle {
   seekTo(seconds: number): void;
-  play(): void;
-  pause(): void;
 }
+
+/** Back-compat alias. Older code may still import this name; both players
+ *  now expose the same minimal shape. */
+export type VideoPlayerHandle = MediaPlayerHandle;
 
 export interface VideoPlayerProps {
   videoId: string;
   onTimeUpdate?: (seconds: number) => void;
 }
 
-const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
+const VideoPlayer = forwardRef<MediaPlayerHandle, VideoPlayerProps>(
   function VideoPlayer({ videoId, onTimeUpdate }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const playerRef = useRef<YTPlayerInstance | null>(null);
@@ -25,8 +30,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         playerRef.current?.seekTo(Math.max(0, s), true);
         playerRef.current?.playVideo();
       },
-      play()  { playerRef.current?.playVideo(); },
-      pause() { playerRef.current?.pauseVideo(); },
     }), []);
 
     useEffect(() => {

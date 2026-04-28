@@ -34,23 +34,23 @@ export default function NewProjectModal({ open, onClose, onSubmit }: Props) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>New project</h2>
+        <h2>new project</h2>
         <form onSubmit={submit}>
           <label>
-            Name
+            name
             <input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label>
-            Description <span className="hint">(optional)</span>
+            description <span className="hint">(optional)</span>
             <textarea rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} />
           </label>
           {error && <div className="form-error">{error}</div>}
           <div className="modal-actions">
             <button type="button" onClick={onClose}>
-              Cancel
+              cancel
             </button>
             <button type="submit" disabled={submitting || !name.trim()}>
-              Create
+              create
             </button>
           </div>
         </form>

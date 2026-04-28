@@ -2,6 +2,7 @@ import { authFetch, withAuthQuery } from "./auth";
 import type {
   AiProvider,
   Analysis,
+  BulkIngestResponse,
   CheckScreenMark,
   CheckScreenMarkKind,
   Transcript,
@@ -318,6 +319,58 @@ export async function deleteMark(videoId: string, id: number): Promise<void> {
     const b = await r.text().catch(() => "");
     throw new Error(`deleteMark failed: ${r.status} ${b}`);
   }
+}
+
+// -------------------------------------------------------------------
+// Podcast / audio playback helpers
+// -------------------------------------------------------------------
+
+/** Build an authenticated URL pointing at the per-video audio file the
+ *  server serves with Range support. Used as the `<audio src=...>` for
+ *  podcast Detail pages — browsers can't add custom Authorization headers
+ *  to media element requests, so the auth token rides as a query param. */
+export function audioUrl(videoId: string): string {
+  return withAuthQuery(`/api/transcripts/${encodeURIComponent(videoId)}/audio`);
+}
+
+export interface BulkIngestPodcastPayload {
+  project_id?: string | null;
+  show: {
+    title: string | null;
+    publisher: string | null;
+    image_url: string | null;
+    rss_url: string | null;
+  };
+  episodes: Array<{
+    title: string;
+    description: string | null;
+    pub_date: string | null;
+    duration_sec: number | null;
+    mp3_url: string;
+    image_url: string | null;
+  }>;
+}
+
+/** Kick off ingest jobs for podcast episodes. Mirrors `bulkIngest`'s
+ *  error-unwrapping shape so callers can show the same toast. */
+export async function bulkIngestPodcast(
+  body: BulkIngestPodcastPayload,
+): Promise<BulkIngestResponse> {
+  const r = await authFetch("/api/ingests/podcast", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    try {
+      const j = JSON.parse(text);
+      throw new Error(j.detail || `bulkIngestPodcast: ${r.status}`);
+    } catch {
+      throw new Error(text || `bulkIngestPodcast: ${r.status}`);
+    }
+  }
+  return r.json();
 }
 
 export function extractVideoId(url: string): string | null {

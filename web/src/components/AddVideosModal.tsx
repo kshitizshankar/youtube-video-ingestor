@@ -6,7 +6,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { extractVideoId } from "../api";
+import { bulkIngestPodcast, extractVideoId } from "../api";
 import { bulkIngest, previewPlaylist, previewPodcast } from "../projects";
 import type {
   BulkIngestResponse,
@@ -216,17 +216,50 @@ export default function AddVideosModal({
       if (submitting) return;
       setSubmitError(null);
 
+      // Podcast tab takes a different code path: it submits show + episode
+      // metadata in one shot via /api/ingests/podcast so the server can
+      // persist publisher / cover art / pub_date alongside each row. The
+      // legacy /api/ingests path only accepts URLs and would lose all that.
+      if (tab === "podcast") {
+        if (!podcastPreview) return;
+        const selected = podcastPreview.episodes.filter((ep) =>
+          podcastSelectedGuids.has(ep.guid),
+        );
+        if (selected.length === 0) return;
+        setSubmitting(true);
+        try {
+          const resp = await bulkIngestPodcast({
+            project_id: projectId,
+            show: {
+              title: podcastPreview.title,
+              publisher: podcastPreview.publisher,
+              image_url: podcastPreview.image_url,
+              rss_url: podcastPreview.rss_url,
+            },
+            episodes: selected.map((ep) => ({
+              title: ep.title,
+              description: ep.description,
+              pub_date: ep.pub_date,
+              duration_sec: ep.duration_sec,
+              mp3_url: ep.mp3_url,
+              image_url: ep.image_url,
+            })),
+          });
+          onSuccess(resp);
+        } catch (err) {
+          setSubmitError(err instanceof Error ? err.message : String(err));
+        } finally {
+          setSubmitting(false);
+        }
+        return;
+      }
+
       let urls: string[] = [];
       if (tab === "playlist") {
         if (!preview) return;
         urls = preview.entries
           .filter((en) => selectedIds.has(en.id))
           .map((en) => en.url);
-      } else if (tab === "podcast") {
-        if (!podcastPreview) return;
-        urls = podcastPreview.episodes
-          .filter((ep) => podcastSelectedGuids.has(ep.guid))
-          .map((ep) => ep.mp3_url);
       } else {
         urls = parsedUrls;
       }

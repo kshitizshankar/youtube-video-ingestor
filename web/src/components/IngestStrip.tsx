@@ -33,9 +33,9 @@ export default function IngestStrip({ ingests, hideWhenEmpty = true }: IngestStr
   return (
     <section className="ingest-strip">
       <header>
-        <span className="label">In progress</span>
+        <span className="label">in progress</span>
         <span className="count">
-          {activeCount} active · {doneCount} just finished
+          {activeCount} active &middot; {doneCount} just finished
         </span>
       </header>
       <div className="ingest-cards">

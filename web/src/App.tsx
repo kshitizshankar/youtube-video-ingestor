@@ -22,7 +22,7 @@ import Settings from "./Settings";
 import { useActiveIngests } from "./useActiveIngests";
 import type { TranscriptSummary } from "./types";
 
-const BASE_TITLE = "Vidan";
+const BASE_TITLE = "vidan.";
 
 /** Holds shell state (sidebar count, ingest modal, pending ingest URL). */
 function Shell() {

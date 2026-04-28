@@ -32,10 +32,10 @@ function speakerLabel(speaker: string | null, override?: string): string {
 
 export default function HighlightsView({ analysis, loading, onSeek, speakerNames = {} }: HighlightsViewProps) {
   if (loading) {
-    return <div className="tr-loading"><span className="dot" /> Loading highlights…</div>;
+    return <div className="tr-loading"><span className="dot" /> loading highlights...</div>;
   }
   if (!analysis) {
-    return <div className="analysis-empty">No highlights yet.</div>;
+    return <div className="analysis-empty">no highlights yet.</div>;
   }
   return (
     <div className="analysis-wrap">

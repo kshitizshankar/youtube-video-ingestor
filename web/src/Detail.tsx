@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   archiveVideo,
+  audioUrl,
   cancelIngest,
   discardOrphanFolder,
   getAnalysis,
@@ -22,7 +23,10 @@ import ResizeHandle from "./components/ResizeHandle";
 import TopBar from "./components/TopBar";
 import TranscriptPane from "./components/TranscriptPane";
 import VideoDetailsPanel from "./components/VideoDetailsPanel";
-import VideoPlayer, { type VideoPlayerHandle } from "./components/VideoPlayer";
+import AudioPlayer from "./components/AudioPlayer";
+import VideoPlayer, {
+  type MediaPlayerHandle,
+} from "./components/VideoPlayer";
 import type { Analysis, Segment, VideoMeta } from "./types";
 
 const TRANSCRIPT_W_KEY = "vvi.transcriptWidthPx";
@@ -113,7 +117,7 @@ export default function Detail({
     return { provider: "claude_cli", skipDialog: false };
   });
 
-  const playerRef = useRef<VideoPlayerHandle>(null);
+  const playerRef = useRef<MediaPlayerHandle>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const esRef = useRef<EventSource | null>(null);
 
@@ -537,7 +541,7 @@ export default function Detail({
           )
         }
         crumbs={[
-          { label: "Library", to: "/" },
+          { label: "library", to: "/" },
           title,
         ]}
         actions={
@@ -550,7 +554,7 @@ export default function Detail({
                 disabled={cancelPending || ingestRecord.cancel_requested}
                 title="Abort at next phase boundary"
               >
-                {ingestRecord.cancel_requested ? "Cancelling…" : "Cancel"}
+                {ingestRecord.cancel_requested ? "cancelling..." : "cancel"}
               </button>
             )}
             {ingestRecord && ingestRecord.done && ingestRecord.error && (
@@ -561,11 +565,11 @@ export default function Detail({
                 disabled={retryPending}
                 title={`Re-run pipeline. Last error: ${ingestRecord.error}`}
               >
-                {retryPending ? "Starting…" : "Retry"}
+                {retryPending ? "starting..." : "retry"}
               </button>
             )}
             <Link to="/" className="btn btn-ghost hide-on-narrow">
-              ← Library
+              &larr; library
             </Link>
           </>
         }
@@ -598,13 +602,13 @@ export default function Detail({
           <div className="orphan-banner-body">
             <span className="orphan-banner-icon" aria-hidden>!</span>
             <div>
-              <div className="orphan-banner-title">Previous ingest didn't finish</div>
+              <div className="orphan-banner-title">previous ingest didn&rsquo;t finish</div>
               <div className="orphan-banner-detail">
-                A folder for this video exists but it's empty (no transcript was written).
-                Most likely the server was restarted mid-ingest. The original job's record is gone.
+                a folder for this video exists but it&rsquo;s empty (no transcript was written).
+                most likely the server was restarted mid-ingest. the original job&rsquo;s record is gone.
                 {orphan.files.length > 0 && (
                   <>
-                    {" "}Partial files: <span className="orphan-files">{orphan.files.join(", ")}</span>.
+                    {" "}partial files: <span className="orphan-files">{orphan.files.join(", ")}</span>.
                   </>
                 )}
               </div>
@@ -617,7 +621,7 @@ export default function Detail({
               onClick={handleRetryIngest}
               disabled={retryPending}
             >
-              {retryPending ? "Starting…" : "Retry ingest"}
+              {retryPending ? "starting..." : "retry ingest"}
             </button>
             <button
               type="button"
@@ -626,7 +630,7 @@ export default function Detail({
               disabled={discardPending}
               title="Delete the empty folder and go back"
             >
-              {discardPending ? "Discarding…" : "Discard"}
+              {discardPending ? "discarding..." : "discard"}
             </button>
           </div>
         </div>
@@ -638,39 +642,81 @@ export default function Detail({
       >
         <div className="detail-left">
           <div className="video-wrap">
-            <VideoPlayer
-              videoId={videoId}
-              onTimeUpdate={setCurrentTime}
-              ref={playerRef}
-            />
+            {transcript?.source === "podcast" ? (
+              <AudioPlayer
+                videoId={videoId}
+                audioUrl={audioUrl(videoId)}
+                imageUrl={transcript.image_url ?? null}
+                onTimeUpdate={setCurrentTime}
+                ref={playerRef}
+              />
+            ) : (
+              <VideoPlayer
+                videoId={videoId}
+                onTimeUpdate={setCurrentTime}
+                ref={playerRef}
+              />
+            )}
           </div>
           <div className="video-meta">
             <h2>{title}</h2>
             <div className="vm-sub">
-              {transcript?.channel && (
+              {transcript?.source === "podcast" ? (
                 <>
-                  {transcript?.channel_url ? (
-                    <a
-                      className="vm-channel"
-                      href={transcript.channel_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >{transcript.channel}</a>
-                  ) : (
-                    <span className="vm-channel">{transcript.channel}</span>
+                  {transcript?.channel && (
+                    <>
+                      <span className="vm-channel">Host: {transcript.channel}</span>
+                      <span className="vm-sep">·</span>
+                    </>
                   )}
-                  <span className="vm-sep">·</span>
+                  {transcript?.show_name && (
+                    <>
+                      {transcript.show_url ? (
+                        <a
+                          className="vm-channel"
+                          href={transcript.show_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >{transcript.show_name}</a>
+                      ) : (
+                        <span className="vm-channel">{transcript.show_name}</span>
+                      )}
+                      <span className="vm-sep">·</span>
+                    </>
+                  )}
+                  {transcript?.upload_date && (() => {
+                    const d = formatYtDate(transcript.upload_date);
+                    return d ? (<><span>{d}</span><span className="vm-sep">·</span></>) : null;
+                  })()}
                 </>
-              )}
-              {transcript?.upload_date && (() => {
-                const d = formatYtDate(transcript.upload_date);
-                return d ? (<><span>{d}</span><span className="vm-sep">·</span></>) : null;
-              })()}
-              {transcript?.view_count != null && (
-                <><span>{formatCount(transcript.view_count)} views</span><span className="vm-sep">·</span></>
-              )}
-              {transcript?.like_count != null && (
-                <><span>{formatCount(transcript.like_count)} likes</span><span className="vm-sep">·</span></>
+              ) : (
+                <>
+                  {transcript?.channel && (
+                    <>
+                      {transcript?.channel_url ? (
+                        <a
+                          className="vm-channel"
+                          href={transcript.channel_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >{transcript.channel}</a>
+                      ) : (
+                        <span className="vm-channel">{transcript.channel}</span>
+                      )}
+                      <span className="vm-sep">·</span>
+                    </>
+                  )}
+                  {transcript?.upload_date && (() => {
+                    const d = formatYtDate(transcript.upload_date);
+                    return d ? (<><span>{d}</span><span className="vm-sep">·</span></>) : null;
+                  })()}
+                  {transcript?.view_count != null && (
+                    <><span>{formatCount(transcript.view_count)} views</span><span className="vm-sep">·</span></>
+                  )}
+                  {transcript?.like_count != null && (
+                    <><span>{formatCount(transcript.like_count)} likes</span><span className="vm-sep">·</span></>
+                  )}
+                </>
               )}
               {dur && (<><span>{dur}</span><span className="vm-sep">·</span></>)}
               {language && (
@@ -687,7 +733,12 @@ export default function Detail({
           </div>
           <VideoDetailsPanel
             videoId={videoId}
-            videoUrl={transcript?.url ?? `https://www.youtube.com/watch?v=${videoId}`}
+            videoUrl={
+              transcript?.url
+              ?? (transcript?.source === "podcast"
+                ? null
+                : `https://www.youtube.com/watch?v=${videoId}`)
+            }
             shareUrl={`${window.location.origin}/v/${videoId}`}
             diarized={diarized}
             segments={segments}

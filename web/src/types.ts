@@ -16,6 +16,13 @@ export interface TranscriptSummary {
   /** Projects this video belongs to. Empty array when unaffiliated. Used by
    *  the library for badges + filtering. */
   project_ids?: string[];
+  /** Discriminator for which kind of media this row represents. The server
+   *  always sets it; legacy rows default to "youtube". The UI should treat
+   *  any unknown value as "youtube" for safety. */
+  source: "youtube" | "podcast";
+  /** Explicit thumbnail URL — populated for podcasts (cover art). Null for
+   *  YouTube; the UI derives a thumbnail from `id` via img.youtube.com. */
+  image_url?: string | null;
 }
 
 export interface VideoMeta {
@@ -61,6 +68,17 @@ export interface Transcript {
   batched?: boolean | null;
   batch_size?: number | null;
   segments: Segment[];
+  /** Discriminator for which kind of media this row represents. Defaults to
+   *  "youtube" for legacy rows. UI should treat unknown values as "youtube". */
+  source: "youtube" | "podcast";
+  /** Explicit cover art / thumbnail. Populated for podcasts; null for
+   *  YouTube. */
+  image_url?: string | null;
+  /** Podcast show title (e.g. "The Moonshot Podcast"). Null for YouTube. */
+  show_name?: string | null;
+  /** Canonical show URL — RSS feed URL or Spotify show URL. Null for
+   *  YouTube. */
+  show_url?: string | null;
 }
 
 export type SseEvent =

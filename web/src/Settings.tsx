@@ -127,7 +127,7 @@ export default function Settings({ onMenuToggle }: SettingsProps) {
   return (
     <div className="main">
       <TopBar
-        crumbs={[{ label: "Library", to: "/" }, "Settings"]}
+        crumbs={[{ label: "library", to: "/" }, "settings"]}
         leading={
           onMenuToggle && (
             <button
@@ -142,7 +142,7 @@ export default function Settings({ onMenuToggle }: SettingsProps) {
         }
         actions={
           <Link to="/" className="btn btn-ghost hide-on-narrow">
-            &larr; Library
+            &larr; library
           </Link>
         }
       />
@@ -157,9 +157,9 @@ export default function Settings({ onMenuToggle }: SettingsProps) {
           margin: "0 auto",
         }}
       >
-        <h1 style={{ margin: "0 0 8px", fontSize: 28 }}>Settings</h1>
-        <p style={{ color: "var(--ink-3)", margin: "0 0 28px", fontSize: 14 }}>
-          Preferences that stick across sessions. Stored locally in your
+        <h1 className="display-md" style={{ margin: "0 0 10px" }}>settings.</h1>
+        <p style={{ color: "var(--ok-plum-60)", margin: "0 0 32px", fontSize: 14, lineHeight: 1.55 }}>
+          preferences that stick across sessions. stored locally in your
           browser.
         </p>
 
@@ -171,12 +171,15 @@ export default function Settings({ onMenuToggle }: SettingsProps) {
             background: "var(--bg-2)",
           }}
         >
-          <header style={{ marginBottom: 18 }}>
-            <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
-              Analysis defaults
+          <header style={{ marginBottom: 22 }}>
+            <h2
+              className="display-sm"
+              style={{ margin: "0 0 6px" }}
+            >
+              analysis defaults.
             </h2>
-            <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 13 }}>
-              The provider and model used when you click Analyze on a video.
+            <p style={{ margin: 0, color: "var(--ok-plum-60)", fontSize: 13, lineHeight: 1.55 }}>
+              the provider and model used when you click analyze on a video.
             </p>
           </header>
 

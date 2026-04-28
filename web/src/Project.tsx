@@ -33,6 +33,10 @@ function entryToSummary(v: ProjectVideoEntry): TranscriptSummary {
     model: null,
     segment_count: 0,
     channel: v.channel,
+    // ProjectVideoEntry doesn't carry a source today; default to "youtube" so
+    // legacy rows render with the YT glyph + thumbnail. Once the project
+    // endpoint starts returning source, thread it through here.
+    source: "youtube",
   };
 }
 
@@ -255,12 +259,12 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
     return (
       <div className="main project-page">
         <TopBar
-          crumbs={[{ label: "Dashboard", to: "/" }, "Project"]}
+          crumbs={[{ label: "dashboard", to: "/" }, "Project"]}
           leading={leading}
         />
         <div className="project-body">
           <div className="empty">
-            Project not found. <Link to="/">Back to dashboard</Link>.
+            project not found. <Link to="/">back to dashboard</Link>.
           </div>
         </div>
       </div>
@@ -270,11 +274,11 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
     return (
       <div className="main project-page">
         <TopBar
-          crumbs={[{ label: "Dashboard", to: "/" }, "Project"]}
+          crumbs={[{ label: "dashboard", to: "/" }, "Project"]}
           leading={leading}
         />
         <div className="project-body">
-          <div className="empty">Loading…</div>
+          <div className="empty">loading...</div>
         </div>
       </div>
     );
@@ -286,21 +290,21 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
   return (
     <div className="main project-page">
       <TopBar
-        crumbs={[{ label: "Dashboard", to: "/" }, project.name]}
+        crumbs={[{ label: "dashboard", to: "/" }, project.name]}
         leading={leading}
         actions={
           <>
             <button
-              className="btn btn-primary"
+              className="btn btn-accent"
               onClick={() => setAddVideosOpen(true)}
             >
-              <PlusIcon /> Add videos
+              <PlusIcon /> add videos
             </button>
             <button
               className="btn btn-destructive"
               onClick={() => setConfirmDelete(true)}
             >
-              Delete project
+              delete project
             </button>
           </>
         }
@@ -344,9 +348,9 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
         {projectIngests.length > 0 && (
           <section className="ingest-strip">
             <header>
-              <span className="label">In progress</span>
+              <span className="label">in progress</span>
               <span className="count">
-                {activeIngests.length} active ·{" "}
+                {activeIngests.length} active &middot;{" "}
                 {projectIngests.filter((i) => i.done).length} just finished
               </span>
             </header>
@@ -361,8 +365,8 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
         <section className="project-videos">
           {videos.length === 0 && projectIngests.length === 0 ? (
             <div className="empty">
-              No videos yet. Click <span className="accent">Add videos</span> to
-              import from a playlist or paste URLs.
+              no videos yet. click <span className="accent">add videos</span> to
+              import from a playlist or paste urls.
             </div>
           ) : (
             videos.map((v) => (
@@ -392,14 +396,14 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
 
       <ConfirmDialog
         open={confirmDelete}
-        title="Delete project?"
+        title="delete project?"
         body={
           <>
-            <strong>{project.name}</strong> will be removed. Videos themselves
-            are not affected — only the project grouping goes away.
+            <strong>{project.name}</strong> will be removed. videos themselves
+            are not affected &mdash; only the project grouping goes away.
           </>
         }
-        confirmLabel="Delete"
+        confirmLabel="delete"
         destructive
         busy={deleteBusy}
         onCancel={() => setConfirmDelete(false)}

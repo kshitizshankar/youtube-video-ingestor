@@ -18,10 +18,10 @@ function fmtTs(sec: number): string {
 
 export default function ChaptersView({ analysis, loading, currentTime, onSeek }: ChaptersViewProps) {
   if (loading) {
-    return <div className="tr-loading"><span className="dot" /> Loading chapters…</div>;
+    return <div className="tr-loading"><span className="dot" /> loading chapters...</div>;
   }
   if (!analysis) {
-    return <div className="analysis-empty">No chapters yet.</div>;
+    return <div className="analysis-empty">no chapters yet.</div>;
   }
   // Find the chapter that contains currentTime: the last one with start <= currentTime.
   const chapters = analysis.chapters;

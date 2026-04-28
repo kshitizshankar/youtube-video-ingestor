@@ -55,7 +55,7 @@ export default function Archive({ onMenuToggle }: ArchiveProps) {
   return (
     <div className="main">
       <TopBar
-        title="Archive"
+        title="archive"
         leading={
           onMenuToggle && (
             <button
@@ -73,13 +73,13 @@ export default function Archive({ onMenuToggle }: ArchiveProps) {
         <div className="library-hero">
           <div>
             <h2>
-              Archive<em>.</em>
+              archive<em>.</em>
             </h2>
             <div className="sub">
-              Soft-deleted videos live here. Transcripts, audio, and analysis
-              are still on disk — restore anytime, or delete forever when you're
-              sure. Deleting forever throws away the Whisper + Claude work for
-              that video.
+              soft-deleted videos live here. transcripts, audio, and analysis
+              are still on disk &mdash; restore anytime, or delete forever when
+              you&rsquo;re sure. deleting forever throws away the whisper +
+              claude work for that video.
             </div>
           </div>
           <div className="library-stats">
@@ -92,16 +92,16 @@ export default function Archive({ onMenuToggle }: ArchiveProps) {
 
         <div className="row-head">
           <div></div>
-          <div>Title</div>
-          <div>Speakers</div>
-          <div>Status</div>
-          <div>Activity</div>
+          <div>title</div>
+          <div>speakers</div>
+          <div>status</div>
+          <div>activity</div>
           <div></div>
         </div>
 
         {items.length === 0 ? (
           <div className="library-empty">
-            Nothing archived. Videos you archive from the Library will land here.
+            nothing archived. videos you archive from the library will land here.
           </div>
         ) : (
           items.map((v) => (
@@ -118,10 +118,10 @@ export default function Archive({ onMenuToggle }: ArchiveProps) {
 
       <ConfirmDialog
         open={!!pendingDelete}
-        title="Delete forever?"
+        title="delete forever?"
         destructive
         busy={busy}
-        confirmLabel="Delete forever"
+        confirmLabel="delete forever"
         body={
           pendingDelete ? (
             <>
@@ -129,14 +129,12 @@ export default function Archive({ onMenuToggle }: ArchiveProps) {
                 <strong>{pendingDelete.title}</strong>
               </p>
               <p>
-                This will permanently delete the transcript, audio, subtitles,
-                and Claude analysis for this video. To get them back you'd have
-                to re-ingest — running Whisper and the Claude analysis pipeline
-                from scratch.
+                this will permanently delete the transcript, audio, subtitles,
+                and claude analysis for this video. to get them back you&rsquo;d
+                have to re-ingest &mdash; running whisper and the claude
+                analysis pipeline from scratch.
               </p>
-              <p>
-                Continue?
-              </p>
+              <p>continue?</p>
             </>
           ) : null
         }

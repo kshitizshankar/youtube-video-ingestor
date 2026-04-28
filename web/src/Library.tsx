@@ -19,10 +19,10 @@ import type { TranscriptSummary } from "./types";
 type SortKey = "recent" | "duration" | "title" | "channel";
 
 const SORT_LABELS: Record<SortKey, string> = {
-  recent: "Recently added",
-  duration: "Longest first",
-  title: "Title A→Z",
-  channel: "Channel A→Z",
+  recent: "recently added",
+  duration: "longest first",
+  title: "title A-Z",
+  channel: "channel A-Z",
 };
 
 export interface LibraryProps {
@@ -178,7 +178,7 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   return (
     <div className="main">
       <TopBar
-        title="Library"
+        title="library"
         leading={
           onMenuToggle && (
             <button
@@ -192,8 +192,8 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
           )
         }
         actions={
-          <button className="btn btn-primary" onClick={onAdd}>
-            <PlusIcon /> Add
+          <button className="btn btn-accent" onClick={onAdd}>
+            <PlusIcon /> add video
           </button>
         }
       />
@@ -204,12 +204,13 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         <div className="library-hero">
           <div>
             <h2>
-              Your library<em>.</em>
+              your library<em>.</em>
             </h2>
             <div className="sub">
-              {items.length} videos transcribed · {totalHours(items)} of material ·{" "}
-              {segCount.toLocaleString()} segments. Paste a YouTube URL and it'll be ready
-              to chat with in a few minutes — everything runs locally on your GPU.
+              {items.length} videos transcribed. {totalHours(items)} of material.{" "}
+              {segCount.toLocaleString()} segments. paste a youtube url and it&rsquo;ll
+              be ready to chat with in a few minutes &mdash; everything runs locally
+              on your gpu.
             </div>
           </div>
           <div className="library-stats">
@@ -249,20 +250,18 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
           <>
 
         <div className="filters">
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--ink-3)" }}>
-            Filter
-          </span>
+          <span className="mono-lbl">filter</span>
           <span
             className={`chip ${filter === "all" ? "active" : ""}`}
             onClick={() => setFilter("all")}
           >
-            All {projectScoped.length}
+            all {projectScoped.length}
           </span>
           <span
             className={`chip ${filter === "diarized" ? "active" : ""}`}
             onClick={() => setFilter("diarized")}
           >
-            <SpeakerGlyph /> Multi-speaker {projectScoped.filter((v) => v.diarized).length}
+            <SpeakerGlyph /> multi-speaker {projectScoped.filter((v) => v.diarized).length}
           </span>
 
           <span className="sort-control">
@@ -272,7 +271,7 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
               onClick={() => setSortOpen((v) => !v)}
               title="Change sort"
             >
-              Sort: {SORT_LABELS[sortKey]} ↓
+              sort: {SORT_LABELS[sortKey]} v
             </button>
             {sortOpen && (
               <div className="sort-menu" role="menu">
@@ -294,14 +293,12 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
 
         {projects.length > 0 && (
           <div className="filters">
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--ink-3)" }}>
-              Project
-            </span>
+            <span className="mono-lbl">project</span>
             <span
               className={`chip ${selectedProjectId === null ? "active" : ""}`}
               onClick={() => setSelectedProject(null)}
             >
-              All {items.length}
+              all {items.length}
             </span>
             {projects.map((p) => {
               const count = items.filter((v) => (v.project_ids ?? []).includes(p.id)).length;
@@ -321,18 +318,18 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
 
         <div className="row-head">
           <div></div>
-          <div>Title</div>
-          <div>Speakers</div>
-          <div>Status</div>
-          <div>Activity</div>
+          <div>title</div>
+          <div>speakers</div>
+          <div>status</div>
+          <div>activity</div>
           <div></div>
         </div>
 
         {visible.length === 0 ? (
           <div className="library-empty">
             {selectedProjectId
-              ? "No videos match this project filter yet."
-              : <>No videos yet. Click <span className="accent">Add video</span> to get started.</>}
+              ? "no videos match this project filter yet."
+              : <>no videos yet. click <span className="accent">add video</span> to get started.</>}
           </div>
         ) : (
           visible.map((v) => (

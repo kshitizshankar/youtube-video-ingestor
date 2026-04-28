@@ -14,7 +14,7 @@ export interface ConfirmDialogProps {
 
 export default function ConfirmDialog({
   open, title, body,
-  confirmLabel = "Confirm", cancelLabel = "Cancel",
+  confirmLabel = "confirm", cancelLabel = "cancel",
   destructive = false, busy = false,
   onConfirm, onCancel,
 }: ConfirmDialogProps) {
@@ -46,7 +46,7 @@ export default function ConfirmDialog({
             onClick={onConfirm}
             disabled={busy}
           >
-            {busy ? "Working…" : confirmLabel}
+            {busy ? "working..." : confirmLabel}
           </button>
         </div>
       </div>
