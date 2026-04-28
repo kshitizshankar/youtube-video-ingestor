@@ -151,8 +151,23 @@ def _ytdlp_cookie_opts() -> dict[str, Any]:
     return out
 
 
-def download_audio(url: str, out_dir: Path) -> tuple[Path, dict[str, Any]]:
-    """Download audio into output/<video_id>/audio.<ext>. Returns the .mp3 path."""
+def download_audio(
+    url: str,
+    out_dir: Path,
+    *,
+    progress_hook=None,
+) -> tuple[Path, dict[str, Any]]:
+    """Download audio into output/<video_id>/audio.<ext>. Returns the .mp3 path.
+
+    `progress_hook`, if given, is registered with yt-dlp and called from
+    yt-dlp's worker thread on every chunk. The hook receives the standard
+    yt-dlp progress dict (`status`, `downloaded_bytes`, `total_bytes`,
+    `eta`, `speed`, `filename`, ...). Used by `stream_transcription` to
+    bump `state.last_event_at` so the live registry doesn't false-fire its
+    "stalled" annotation during long downloads — yt-dlp holds the GIL
+    inside its C-backed network loop, so our threaded heartbeat can't
+    fire reliably until the download finishes.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     opts: dict[str, Any] = {
         "format": "bestaudio/best",
@@ -164,6 +179,9 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, dict[str, Any]]:
         "quiet": True,
         "no_warnings": True,
     }
+    if progress_hook is not None:
+        # yt-dlp accepts a list -- multiple hooks can coexist if needed.
+        opts["progress_hooks"] = [progress_hook]
     opts.update(_ytdlp_cookie_opts())
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -530,7 +548,38 @@ async def stream_transcription(
             hb_state["phase"] = "downloading"
             state.update(video_id, phase="downloading")
             push("phase", {"phase": "downloading", "message": "Downloading audio..."})
-            audio_path, info = download_audio(req.url, out_dir)
+
+            # yt-dlp progress hook -- yt-dlp's network loop holds the GIL
+            # for long stretches, so our 5s heartbeat thread can't run
+            # reliably during a download. Each progress callback bumps
+            # last_event_at directly (so list_active() doesn't mark this
+            # stalled) and pushes a `progress` SSE event so the UI strip
+            # shows live download bytes/percentage.
+            def _ydl_progress(d: dict) -> None:
+                if not video_id:
+                    return
+                # Always bump last_event_at, even on "finished" (the post-
+                # processor still runs after this).
+                state.update(video_id)
+                status = d.get("status")
+                if status == "downloading":
+                    downloaded = d.get("downloaded_bytes") or 0
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    pct = (downloaded / total * 100) if total else None
+                    payload = {
+                        "phase": "downloading",
+                        "downloaded_bytes": downloaded,
+                        "total_bytes": total or None,
+                        "speed": d.get("speed"),
+                        "eta": d.get("eta"),
+                    }
+                    if pct is not None:
+                        payload["pct"] = round(pct, 1)
+                    push("download_progress", payload)
+                elif status == "finished":
+                    push("download_progress", {"phase": "downloaded", "pct": 100.0})
+
+            audio_path, info = download_audio(req.url, out_dir, progress_hook=_ydl_progress)
             # yt-dlp gives us the authoritative id; rekey the registry entry
             # if our regex-based guess differed (e.g. playlist-context URL).
             actual_id = info["id"]
