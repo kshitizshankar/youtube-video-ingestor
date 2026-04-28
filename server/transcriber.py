@@ -178,6 +178,14 @@ def download_audio(
         ],
         "quiet": True,
         "no_warnings": True,
+        # Strip ?, =, &, spaces from yt-dlp's derived `id` before it lands
+        # in the outtmpl path. Podcast hosts redirect to signed URLs like
+        # `audio.buzzsprout.com/<hash>?response-content-disposition=inline`
+        # and yt-dlp's generic extractor uses the post-redirect URL path
+        # (including the query string) as `info["id"]`. On Windows a path
+        # containing `?` raises ValueError(EINVAL) before the download
+        # even starts.
+        "restrictfilenames": True,
         # Tolerance for shaky upstream CDNs. Podcast hosts (Buzzsprout,
         # Megaphone, Libsyn) start dropping connections once they see a
         # burst of requests from one IP -- raising the per-socket timeout
