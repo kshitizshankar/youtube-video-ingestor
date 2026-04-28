@@ -178,6 +178,18 @@ def download_audio(
         ],
         "quiet": True,
         "no_warnings": True,
+        # Tolerance for shaky upstream CDNs. Podcast hosts (Buzzsprout,
+        # Megaphone, Libsyn) start dropping connections once they see a
+        # burst of requests from one IP -- raising the per-socket timeout
+        # and retry budget keeps a single ingest alive through transient
+        # 5xx / RST / read-timeout from the CDN.
+        "socket_timeout": 60,
+        "retries": 10,
+        "fragment_retries": 10,
+        "retry_sleep_functions": {
+            # Exponential backoff: 1s, 2s, 4s, ..., capped at 30s.
+            "http": lambda n: min(30, 2 ** (n - 1)),
+        },
     }
     if progress_hook is not None:
         # yt-dlp accepts a list -- multiple hooks can coexist if needed.
