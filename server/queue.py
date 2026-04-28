@@ -126,6 +126,7 @@ def _transcribe_task(
             transcription_elapsed_sec=result.get("elapsed_sec"),
             batched=req.batched,
             batch_size=req.batch_size,
+            metadata=req.metadata,
         )
         persist_video_to_db(out_dir, video_id, info, result, req)
 
@@ -184,11 +185,24 @@ def _download_task(
             state.rekey(video_id, actual_id)
             video_id = actual_id
 
+        # Prefer pre-supplied podcast metadata over yt-dlp's generic-
+        # extractor output -- otherwise the active-ingest strip flips from
+        # the user-friendly title (set at enqueue time by the podcast
+        # endpoint) to whatever CDN slug yt-dlp pulled out of the URL.
+        _meta_pre = req.metadata if isinstance(req.metadata, dict) else None
+        _title_for_state = (
+            (_meta_pre.get("title") if _meta_pre else None)
+            or info.get("title")
+        )
+        _duration_for_state = (
+            (_meta_pre.get("duration_sec") if _meta_pre else None)
+            or info.get("duration")
+        )
         state.update(
             video_id,
             phase="awaiting_gpu",
-            title=info.get("title"),
-            duration_sec=info.get("duration"),
+            title=_title_for_state,
+            duration_sec=_duration_for_state,
         )
 
         if state.is_cancel_requested(video_id):

@@ -38,6 +38,35 @@ def audio_path(out_dir: Path, video_id: str) -> Path:
     return video_dir(out_dir, video_id) / "audio.mp3"
 
 
+# Extensions that yt-dlp's FFmpegExtractAudio post-processor (or a direct
+# audio-URL ingest before postprocessing) might drop into the per-video
+# folder. Order is preferred-first: mp3 is the post-processed canonical
+# output; the others appear when the post-processor was skipped or when
+# we were handed a non-mp3 source.
+_AUDIO_EXTS: tuple[str, ...] = (".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".webm")
+
+
+def find_audio_file(out_dir: Path, video_id: str) -> Path | None:
+    """Return the first existing `audio.<ext>` in the per-video folder, or
+    None if no audio sidecar is present. Used by the audio-streaming
+    endpoint, which must serve whichever extension yt-dlp actually wrote."""
+    folder = video_dir(out_dir, video_id)
+    if not folder.exists():
+        return None
+    for ext in _AUDIO_EXTS:
+        p = folder / f"audio{ext}"
+        if p.exists():
+            return p
+    # Last-ditch: anything starting with "audio." (covers exotic codecs).
+    try:
+        for entry in folder.iterdir():
+            if entry.is_file() and entry.name.startswith("audio."):
+                return entry
+    except OSError:
+        pass
+    return None
+
+
 def claude_md(out_dir: Path, video_id: str) -> Path:
     return video_dir(out_dir, video_id) / "CLAUDE.md"
 

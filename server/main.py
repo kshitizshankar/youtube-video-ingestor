@@ -23,10 +23,15 @@ from . import projects as projects_mod
 from . import queue as queue_mod
 from .analyze import analyze_video, stream_analyze_video
 from .db import open_connection, run_migrations
-from .layout import migrate_flat_outputs, video_dir
+from .layout import find_audio_file, migrate_flat_outputs, video_dir
 from .migrate_data import migrate_data
 from .pty_handler import handle_pty_session
-from .transcriber import TranscribeRequest, extract_video_id, stream_transcription
+from .transcriber import (
+    TranscribeRequest,
+    _safe_video_id,
+    extract_video_id,
+    stream_transcription,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -811,6 +816,178 @@ def api_bulk_ingest(body: dict = Body(...)):
         return {"job_ids": kicked, "skipped": skipped, "project_id": project_id}
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Podcast ingest (POST /api/ingests/podcast)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/ingests/podcast", dependencies=[Depends(auth.require_http)])
+def api_podcast_ingest(body: dict = Body(...)):
+    """Schedule one-or-more podcast episodes for ingestion. The frontend
+    sends the resolved show + episode metadata from /api/podcast/preview
+    so the rich data (title, host, image, pub_date, duration) is preserved
+    end-to-end, instead of getting overwritten by yt-dlp's generic
+    extractor (which sees the audio CDN URL and pulls a slug out of it).
+
+    Body shape:
+        {
+          "project_id": "...",            # optional
+          "show":   { title, publisher, image_url, rss_url },
+          "episodes": [
+            { title, description, pub_date, duration_sec, mp3_url,
+              image_url? },
+            ...
+          ]
+        }
+
+    Returns the same envelope as POST /api/ingests:
+        { "job_ids": [...], "skipped": [...], "project_id": ... }
+    """
+    project_id = body.get("project_id")
+    show = body.get("show") or {}
+    episodes = body.get("episodes")
+
+    if not isinstance(episodes, list) or not episodes:
+        raise HTTPException(
+            status_code=400, detail="episodes must be a non-empty list",
+        )
+    if not isinstance(show, dict):
+        raise HTTPException(status_code=400, detail="show must be an object")
+
+    # Validate every mp3_url through the same SSRF gate the preview path
+    # uses so a malicious frontend can't smuggle file:// or an internal IP.
+    bad = 0
+    cleaned: list[dict] = []
+    for ep in episodes:
+        if not isinstance(ep, dict):
+            raise HTTPException(
+                status_code=400, detail="each episode must be an object",
+            )
+        mp3 = (ep.get("mp3_url") or "").strip()
+        if not mp3:
+            raise HTTPException(
+                status_code=400, detail="episode missing mp3_url",
+            )
+        try:
+            podcast_mod._validate_url(mp3)
+        except podcast_mod.PodcastError:
+            bad += 1
+            continue
+        cleaned.append(ep)
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{bad} episode URL(s) failed SSRF validation",
+        )
+
+    show_title = (show.get("title") or "").strip() or None
+    show_publisher = (show.get("publisher") or "").strip() or None
+    show_image = (show.get("image_url") or "").strip() or None
+    show_rss = (show.get("rss_url") or "").strip() or None
+
+    conn = open_connection(OUTPUT_DIR / "app.db")
+    try:
+        kicked: list[str] = []
+        skipped: list[dict] = []
+        hf_token = os.environ.get("HUGGINGFACE_TOKEN")
+
+        for ep in cleaned:
+            mp3_url = ep["mp3_url"].strip()
+            safe_id = _safe_video_id(mp3_url)
+
+            # Dedup vs already-ingested rows. Same semantics as
+            # api_bulk_ingest: archived rows skip, transcribed rows skip
+            # (and join the project if one was passed), force flag isn't
+            # supported on this endpoint yet.
+            existing = conn.execute(
+                "SELECT archived FROM videos WHERE id=?", (safe_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["archived"]:
+                    skipped.append({"video_id": safe_id, "reason": "archived"})
+                    continue
+                if project_id:
+                    projects_mod.add_videos(
+                        OUTPUT_DIR, project_id, [safe_id], conn=conn,
+                    )
+                skipped.append({"video_id": safe_id, "reason": "already_transcribed"})
+                continue
+
+            ep_title = (ep.get("title") or "").strip() or "(untitled)"
+            ep_desc = ep.get("description") or None
+            ep_pub = ep.get("pub_date") or None
+            ep_duration = ep.get("duration_sec")
+            ep_image = (ep.get("image_url") or "").strip() or None
+
+            metadata = {
+                "source": "podcast",
+                "title": ep_title,
+                "host": show_publisher,
+                "show_name": show_title,
+                "show_url": show_rss,
+                "image_url": ep_image or show_image,
+                "pub_date": ep_pub,
+                "duration_sec": ep_duration,
+                "description": ep_desc,
+            }
+
+            # Pre-seed the registry so the active-ingest strip shows the
+            # proper title + duration the moment this returns. Without
+            # this, the strip would briefly show the raw URL until the
+            # download stage finishes.
+            state.begin(safe_id, url=mp3_url)
+            state.update(
+                safe_id,
+                phase="queued",
+                title=ep_title,
+                duration_sec=ep_duration,
+            )
+
+            req = TranscribeRequest(url=mp3_url, metadata=metadata)
+            queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token, project_id=project_id)
+            kicked.append(safe_id)
+
+        return {"job_ids": kicked, "skipped": skipped, "project_id": project_id}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Audio file (GET /api/transcripts/{video_id}/audio)
+# ---------------------------------------------------------------------------
+
+
+# Map common audio extensions to media types so the browser's <audio>
+# element can pick the right decoder. FastAPI's FileResponse handles
+# Range requests natively, which is what an HTML5 audio element uses to
+# seek through long podcast episodes without re-downloading from byte 0.
+_AUDIO_MIME = {
+    ".mp3":  "audio/mpeg",
+    ".m4a":  "audio/mp4",
+    ".aac":  "audio/aac",
+    ".wav":  "audio/wav",
+    ".ogg":  "audio/ogg",
+    ".opus": "audio/ogg",
+    ".webm": "audio/webm",
+}
+
+
+@app.get(
+    "/api/transcripts/{video_id}/audio",
+    dependencies=[Depends(auth.require_http)],
+)
+def api_get_audio(video_id: str):
+    """Stream the per-video audio file. Used by the Detail page audio
+    player for podcast episodes, and as a fallback for YouTube ingests
+    when the user wants to scrub the local copy. FileResponse handles
+    Range requests natively (HTTP 206 partial content)."""
+    p = find_audio_file(OUTPUT_DIR, video_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="no audio for this video")
+    media_type = _AUDIO_MIME.get(p.suffix.lower(), "application/octet-stream")
+    return FileResponse(str(p), media_type=media_type, filename=p.name)
 
 
 # ---------------------------------------------------------------------------

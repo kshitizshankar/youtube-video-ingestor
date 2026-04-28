@@ -33,6 +33,11 @@ _SUMMARY_COLS = [
     "speaker_count", "model", "segment_count",
     "archived", "channel", "channel_url", "upload_date",
     "view_count", "like_count",
+    # Source-aware columns. `source` is the discriminator the UI branches
+    # on (audio player vs YouTube embed); `image_url` is the explicit
+    # thumbnail for podcasts. show_name / show_url stay off the summary
+    # to keep the cards row tight -- they surface in the full transcript.
+    "source", "image_url",
 ]
 
 

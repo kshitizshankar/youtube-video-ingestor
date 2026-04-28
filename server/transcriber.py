@@ -283,6 +283,7 @@ def write_outputs(
     transcription_elapsed_sec: float | None = None,
     batched: bool | None = None,
     batch_size: int | None = None,
+    metadata: dict | None = None,
 ) -> dict[str, Path]:
     vd = video_dir(out_dir, video_id)
     vd.mkdir(parents=True, exist_ok=True)
@@ -314,11 +315,19 @@ def write_outputs(
     }
     speaker_count = len(unique_speakers)
 
+    is_podcast = bool(metadata) and (metadata or {}).get("source") == "podcast"
+    if is_podcast:
+        title = metadata.get("title") or info.get("title") or info.get("id")
+        out_duration = metadata.get("duration_sec") or info.get("duration")
+    else:
+        title = info.get("title") or info.get("id")
+        out_duration = info.get("duration")
+
     meta = {
         "url": url,
         "id": info.get("id"),
-        "title": info.get("title") or info.get("id"),
-        "duration_sec": info.get("duration"),
+        "title": title,
+        "duration_sec": out_duration,
         "language": language,
         "language_probability": language_probability,
         "model": model,
@@ -332,6 +341,21 @@ def write_outputs(
         **_extract_video_metadata(info),
         "segments": segments,
     }
+    if is_podcast:
+        # Override generic-extractor junk with the values the user saw in
+        # the preview: host as "channel", episode/show description, the
+        # podcast cover art, and the show metadata.
+        meta["channel"] = metadata.get("host") or meta.get("channel")
+        meta["channel_url"] = None
+        if metadata.get("description"):
+            meta["description"] = metadata["description"][:1000]
+        meta["source"] = "podcast"
+        meta["image_url"] = metadata.get("image_url")
+        meta["show_name"] = metadata.get("show_name")
+        meta["show_url"] = metadata.get("show_url")
+        meta["pub_date"] = metadata.get("pub_date")
+    else:
+        meta["source"] = "youtube"
     json_p.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     cmd_p.write_text(render_video_claude_md(meta), encoding="utf-8")
     return {"txt": txt_p, "srt": srt_p, "json": json_p, "claude_md": cmd_p}
@@ -355,6 +379,25 @@ class TranscribeRequest:
     diarize: bool = False
     min_speakers: int | None = None
     max_speakers: int | None = None
+    # Optional pre-supplied metadata for non-YouTube ingests (podcasts).
+    # When present, the worker prefers these fields over yt-dlp's `info`
+    # dict for title, description, channel/host, upload_date, duration,
+    # image_url, show_name, show_url, and stamps source='podcast' on the
+    # videos row. When None, behavior is unchanged (YouTube path).
+    #
+    # Shape:
+    #   {
+    #     "source":        "podcast",      # always "podcast" today
+    #     "title":         str,
+    #     "host":          str | None,
+    #     "show_name":     str | None,
+    #     "show_url":      str | None,
+    #     "image_url":     str | None,
+    #     "pub_date":      str | None,    # ISO-8601 from RSS
+    #     "duration_sec":  float | None,
+    #     "description":   str | None,
+    #   }
+    metadata: dict | None = None
 
 
 def _emit(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, event: str, data: dict) -> None:
@@ -632,16 +675,28 @@ async def stream_transcription(
                 state.rekey(video_id, actual_id)
                 video_id = actual_id
             check_cancel()
+            # Prefer pre-supplied podcast metadata over yt-dlp's generic-
+            # extractor guesses (title gets populated with the CDN slug
+            # otherwise).
+            _meta_pre = req.metadata if isinstance(req.metadata, dict) else None
+            _post_title = (
+                (_meta_pre.get("title") if _meta_pre else None)
+                or info.get("title")
+            )
+            _post_duration = (
+                (_meta_pre.get("duration_sec") if _meta_pre else None)
+                or info.get("duration")
+            )
             state.update(
                 video_id,
                 phase="downloaded",
-                title=info.get("title"),
-                duration_sec=info.get("duration"),
+                title=_post_title,
+                duration_sec=_post_duration,
             )
             push("downloaded", {
                 "id": video_id,
-                "title": info.get("title"),
-                "duration_sec": info.get("duration"),
+                "title": _post_title,
+                "duration_sec": _post_duration,
             })
 
             def run_and_track(fn, *args):
@@ -701,6 +756,7 @@ async def stream_transcription(
                 transcription_elapsed_sec=result.get("elapsed_sec"),
                 batched=req.batched,
                 batch_size=req.batch_size,
+                metadata=req.metadata,
             )
             persist_video_to_db(out_dir, video_id, info, result, req)
 
@@ -737,6 +793,24 @@ async def stream_transcription(
 
 
 from datetime import datetime, timezone
+
+
+def _iso_to_yyyymmdd(iso: str | None) -> str | None:
+    """Convert an ISO-8601 timestamp (e.g. RSS pub_date) to YouTube-style
+    YYYYMMDD. Returns None on any parse failure so callers can fall back."""
+    if not iso:
+        return None
+    s = iso.strip()
+    if not s:
+        return None
+    # datetime.fromisoformat handles "+11:00" but not bare "Z" until 3.11.
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y%m%d")
 
 
 def _folder_bytes(folder: Path) -> int:
@@ -779,17 +853,47 @@ def persist_video_to_db(
         run_migrations(conn)
         now = datetime.now(timezone.utc).isoformat()
         segments = result.get("segments") or []
+        meta = req.metadata if isinstance(req.metadata, dict) else None
+        is_podcast = bool(meta) and (meta or {}).get("source") == "podcast"
+
+        # When metadata is supplied (podcast path), prefer it over yt-dlp's
+        # `info` dict -- yt-dlp's generic extractor populates these fields
+        # with junk for podcast CDN URLs (CDN slugs, generic placeholders).
+        if is_podcast:
+            title = meta.get("title") or info.get("title")
+            channel = meta.get("host") or info.get("channel") or info.get("uploader")
+            upload_date = (
+                _iso_to_yyyymmdd(meta.get("pub_date"))
+                or info.get("upload_date")
+            )
+            duration = meta.get("duration_sec") or info.get("duration")
+            description_raw = meta.get("description") or info.get("description") or ""
+            image_url = meta.get("image_url")
+            show_name = meta.get("show_name")
+            show_url = meta.get("show_url")
+            source_val = "podcast"
+        else:
+            title = info.get("title")
+            channel = info.get("channel") or info.get("uploader")
+            upload_date = info.get("upload_date")
+            duration = info.get("duration")
+            description_raw = info.get("description") or ""
+            image_url = None
+            show_name = None
+            show_url = None
+            source_val = "youtube"
+
         row = {
             "id": video_id,
             "url": req.url,
-            "title": info.get("title"),
-            "channel": info.get("channel") or info.get("uploader"),
+            "title": title,
+            "channel": channel,
             "channel_id": info.get("channel_id") or info.get("uploader_id"),
             "channel_url": info.get("channel_url") or info.get("uploader_url"),
             "channel_follower_count": info.get("channel_follower_count"),
-            "upload_date": info.get("upload_date"),
-            "duration_sec": info.get("duration"),
-            "description": (info.get("description") or "")[:1000] or None,
+            "upload_date": upload_date,
+            "duration_sec": duration,
+            "description": description_raw[:1000] or None,
             "categories": _json.dumps(info.get("categories") or []),
             "yt_tags": _json.dumps(info.get("tags") or []),
             "view_count": info.get("view_count"),
@@ -806,12 +910,16 @@ def persist_video_to_db(
             "batch_size": req.batch_size,
             "transcription_elapsed_sec": result.get("elapsed_sec"),
             "transcription_realtime_factor": (
-                (info.get("duration") or 0) / result["elapsed_sec"]
+                (duration or 0) / result["elapsed_sec"]
                 if result.get("elapsed_sec") else None
             ),
             "storage_bytes": _folder_bytes(out_dir / video_id),
             "transcribed_at": now,
             "updated_at": now,
+            "source": source_val,
+            "image_url": image_url,
+            "show_name": show_name,
+            "show_url": show_url,
         }
         conn.execute("""
             INSERT INTO videos(
@@ -822,7 +930,8 @@ def persist_video_to_db(
                 segment_count, model, compute_type, batched, batch_size,
                 transcription_elapsed_sec, transcription_realtime_factor,
                 storage_bytes, archived, notes, owner, transcribed_at,
-                created_at, updated_at
+                created_at, updated_at,
+                source, image_url, show_name, show_url
             ) VALUES (
                 :id, :url, :title, :channel, :channel_id, :channel_url,
                 :channel_follower_count, :upload_date, :duration_sec, :description,
@@ -831,7 +940,8 @@ def persist_video_to_db(
                 :segment_count, :model, :compute_type, :batched, :batch_size,
                 :transcription_elapsed_sec, :transcription_realtime_factor,
                 :storage_bytes, 0, NULL, NULL, :transcribed_at,
-                :updated_at, :updated_at
+                :updated_at, :updated_at,
+                :source, :image_url, :show_name, :show_url
             )
             ON CONFLICT(id) DO UPDATE SET
                 url=excluded.url,
@@ -861,7 +971,11 @@ def persist_video_to_db(
                 transcription_realtime_factor=excluded.transcription_realtime_factor,
                 storage_bytes=excluded.storage_bytes,
                 transcribed_at=excluded.transcribed_at,
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                source=excluded.source,
+                image_url=excluded.image_url,
+                show_name=excluded.show_name,
+                show_url=excluded.show_url
         """, row)
     except Exception as e:
         log.warning("persist_video_to_db failed for %s: %s", video_id, e)
