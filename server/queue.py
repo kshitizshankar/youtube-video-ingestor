@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import state
+from . import sources as sources_mod
 from .transcriber import (
     TranscribeRequest,
     _run_plain,
@@ -42,6 +43,49 @@ _MAX_GPU = int(os.environ.get("MAX_CONCURRENT_TRANSCRIPTIONS") or "1")
 
 _download_executor = ThreadPoolExecutor(max_workers=_MAX_DL, thread_name_prefix="ingest-dl")
 _transcribe_executor = ThreadPoolExecutor(max_workers=_MAX_GPU, thread_name_prefix="ingest-gpu")
+
+
+def _provider_uses_default_download(provider: sources_mod.Provider) -> bool:
+    """All current providers wrap `transcriber.download_audio`. Calling it
+    directly here keeps `queue_mod.download_audio` as the single binding
+    tests patch -- and gives us a hook for the day a provider needs its
+    own download implementation (e.g. custom auth, non-yt-dlp source).
+    """
+    return isinstance(
+        provider,
+        (
+            sources_mod.YouTubeProvider,
+            sources_mod.GenericAudioProvider,
+            sources_mod.RSSProvider,
+            sources_mod.SpotifyProvider,
+        ),
+    )
+
+
+def _provider_source_from_request(req: TranscribeRequest) -> sources_mod.Source:
+    """Build a minimal Source from a TranscribeRequest for the
+    Provider.download() call. We only need the URL + a kind hint here --
+    full metadata (when present) already lives on req.metadata, which the
+    write/persist helpers consult downstream."""
+    meta = req.metadata if isinstance(req.metadata, dict) else None
+    kind: sources_mod.SourceKind = "youtube"
+    if meta and meta.get("source") == "podcast":
+        kind = "podcast"
+    elif meta and meta.get("source") == "audio":
+        kind = "audio"
+    return sources_mod.Source(
+        kind=kind,
+        url=req.url,
+        title=(meta or {}).get("title") or req.url,
+        description=(meta or {}).get("description"),
+        duration_sec=(meta or {}).get("duration_sec"),
+        pub_date=(meta or {}).get("pub_date"),
+        image_url=(meta or {}).get("image_url"),
+        host=(meta or {}).get("host"),
+        show_name=(meta or {}).get("show_name"),
+        show_url=(meta or {}).get("show_url"),
+        safe_id=None,
+    )
 
 
 class _CancelledMidRun(Exception):
@@ -176,7 +220,24 @@ def _download_task(
             return
 
         state.update(video_id, phase="downloading")
-        audio_path, info = download_audio(req.url, out_dir)
+        # Route through the Provider registry: each URL gets a provider
+        # whose download() knows the right opts. For YouTube + generic-
+        # audio + RSS + Spotify, this all collapses to the same yt-dlp
+        # call `download_audio()` has always made -- so the queue's
+        # `download_audio` symbol stays the canonical "go fetch audio"
+        # binding (tests patch it; the providers route through it). When
+        # a future provider needs entirely different download logic, it
+        # implements its own and we can detect that here.
+        try:
+            provider = sources_mod.dispatch(req.url)
+        except sources_mod.ProviderError:
+            provider = None
+        if provider is None or _provider_uses_default_download(provider):
+            audio_path, info = download_audio(req.url, out_dir)
+        else:
+            audio_path, info = provider.download(
+                _provider_source_from_request(req), out_dir,
+            )
 
         # yt-dlp gives us the authoritative id; rekey if we guessed wrong
         # (e.g. URL had playlist context and our regex pulled the list id).

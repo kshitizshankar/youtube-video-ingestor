@@ -21,6 +21,7 @@ from . import playlist as playlist_mod
 from . import podcast as podcast_mod
 from . import projects as projects_mod
 from . import queue as queue_mod
+from . import sources as sources_mod
 from .analyze import analyze_video, stream_analyze_video
 from .db import open_connection, run_migrations
 from .layout import find_audio_file, migrate_flat_outputs, video_dir
@@ -779,43 +780,108 @@ def api_bulk_ingest(body: dict = Body(...)):
         skipped: list[dict] = []
         hf_token = os.environ.get("HUGGINGFACE_TOKEN")
         for url in expanded_urls:
-            vid = extract_video_id(url)
-            if vid is not None:
-                existing = conn.execute(
-                    "SELECT archived FROM videos WHERE id=?", (vid,)
-                ).fetchone()
-                if existing is not None and not force:
-                    if existing["archived"]:
-                        skipped.append({"video_id": vid, "reason": "archived"})
-                        continue
-                    # Already-transcribed live video: add to project if given,
-                    # skip transcription.
-                    if project_id:
-                        projects_mod.add_videos(
-                            OUTPUT_DIR, project_id, [vid], conn=conn,
-                        )
-                    skipped.append({"video_id": vid, "reason": "already_transcribed"})
-                    continue
-                if existing is not None and force:
-                    # Force path: drop the DB row so re-ingest is clean.
-                    conn.execute("DELETE FROM videos WHERE id=?", (vid,))
-            # Schedule the ingest.
-            req_opts: dict[str, Any] = {
-                "url": url,
-                "diarize": bool(options.get("diarize", False)),
-                "batched": bool(options.get("batched", True)),
-            }
-            if options.get("model"):
-                req_opts["model"] = str(options["model"])
-            req = TranscribeRequest(**req_opts)
-            track_id = vid or f"pending-{url[-11:]}"
-            state.begin(track_id, url=url)
-            state.update(track_id, phase="queued")
-            queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token, project_id=project_id)
-            kicked.append(vid or url)
+            # Fast path for plain YouTube video URLs: no provider resolve
+            # needed -- yt-dlp will fetch metadata at download time. This
+            # also keeps `_safe_video_id`-style dedup against the videos
+            # row cheap (one SELECT, no network round-trip).
+            yt_id = extract_video_id(url)
+            if yt_id is not None:
+                _enqueue_one(
+                    conn, kicked, skipped, url=url, vid=yt_id,
+                    metadata=None, options=options, force=force,
+                    project_id=project_id, hf_token=hf_token,
+                )
+                continue
+
+            # Non-YouTube URL: dispatch to the right Provider, resolve, and
+            # enqueue every Source it returns. A Spotify show URL pasted
+            # into /api/ingests therefore expands into N episodes.
+            try:
+                provider = sources_mod.dispatch(url)
+            except sources_mod.ProviderError as e:
+                skipped.append({"video_id": url, "reason": f"no_provider: {e}"})
+                continue
+            try:
+                source_list = provider.resolve(url)
+            except sources_mod.ProviderError as e:
+                skipped.append({"video_id": url, "reason": f"resolve_failed: {e}"})
+                continue
+            except Exception:
+                log.exception("provider.resolve failed for %s", url)
+                skipped.append({"video_id": url, "reason": "resolve_failed"})
+                continue
+            for src in source_list.sources:
+                _enqueue_one(
+                    conn, kicked, skipped,
+                    url=src.url, vid=src.safe_id,
+                    metadata=src.to_metadata(),
+                    options=options, force=force,
+                    project_id=project_id, hf_token=hf_token,
+                    source_obj=src,
+                )
         return {"job_ids": kicked, "skipped": skipped, "project_id": project_id}
     finally:
         conn.close()
+
+
+def _enqueue_one(
+    conn,
+    kicked: list[str],
+    skipped: list[dict],
+    *,
+    url: str,
+    vid: str | None,
+    metadata: dict | None,
+    options: dict,
+    force: bool,
+    project_id: str | None,
+    hf_token: str | None,
+    source_obj: "sources_mod.Source | None" = None,
+) -> None:
+    """Common enqueue path used by /api/ingests (regardless of provider).
+    `vid` is the canonical id for dedup -- YouTube id for YouTube URLs,
+    `aud-<sha1[:12]>` for everything else. When None, we skip dedup and
+    let the worker resolve the id at download time."""
+    if vid is not None:
+        existing = conn.execute(
+            "SELECT archived FROM videos WHERE id=?", (vid,),
+        ).fetchone()
+        if existing is not None and not force:
+            if existing["archived"]:
+                skipped.append({"video_id": vid, "reason": "archived"})
+                return
+            # Already-transcribed: add to project if given.
+            if project_id:
+                projects_mod.add_videos(
+                    OUTPUT_DIR, project_id, [vid], conn=conn,
+                )
+            skipped.append({"video_id": vid, "reason": "already_transcribed"})
+            return
+        if existing is not None and force:
+            conn.execute("DELETE FROM videos WHERE id=?", (vid,))
+
+    req_opts: dict[str, Any] = {
+        "url": url,
+        "diarize": bool(options.get("diarize", False)),
+        "batched": bool(options.get("batched", True)),
+    }
+    if options.get("model"):
+        req_opts["model"] = str(options["model"])
+    if metadata is not None:
+        req_opts["metadata"] = metadata
+    req = TranscribeRequest(**req_opts)
+
+    track_id = vid or f"pending-{url[-11:]}"
+    state.begin(track_id, url=url)
+    pre_seed: dict[str, Any] = {"phase": "queued"}
+    if metadata:
+        if metadata.get("title"):
+            pre_seed["title"] = metadata["title"]
+        if metadata.get("duration_sec") is not None:
+            pre_seed["duration_sec"] = metadata["duration_sec"]
+    state.update(track_id, **pre_seed)
+    queue_mod.enqueue_ingest(req, OUTPUT_DIR, hf_token, project_id=project_id)
+    kicked.append(vid or url)
 
 
 # ---------------------------------------------------------------------------
