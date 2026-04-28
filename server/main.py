@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import auth, meta as meta_mod, state, transcripts
 from . import marks as marks_mod
 from . import playlist as playlist_mod
+from . import podcast as podcast_mod
 from . import projects as projects_mod
 from . import queue as queue_mod
 from .analyze import analyze_video, stream_analyze_video
@@ -690,6 +691,46 @@ def api_playlist_preview(body: dict = Body(...)):
         ],
         "failures": [
             {"id": f.id, "reason": f.reason} for f in preview.failures
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Podcast preview
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/podcast/preview", dependencies=[Depends(auth.require_http)])
+def api_podcast_preview(body: dict = Body(...)):
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url required")
+    try:
+        preview = podcast_mod.preview_podcast(url)
+    except podcast_mod.PodcastError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        # Don't leak hostnames, ports, or filesystem paths from URLError /
+        # FileNotFoundError / etc. into the HTTP body.
+        log.exception("podcast preview failed for %s", url)
+        raise HTTPException(status_code=502, detail="upstream fetch failed")
+    return {
+        "source": preview.source,
+        "rss_url": preview.rss_url,
+        "title": preview.title,
+        "publisher": preview.publisher,
+        "description": preview.description,
+        "image_url": preview.image_url,
+        "episodes": [
+            {
+                "guid": ep.guid,
+                "title": ep.title,
+                "description": ep.description,
+                "pub_date": ep.pub_date,
+                "duration_sec": ep.duration_sec,
+                "mp3_url": ep.mp3_url,
+                "image_url": ep.image_url,
+            } for ep in preview.episodes
         ],
     }
 
