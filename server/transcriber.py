@@ -151,41 +151,61 @@ def _ytdlp_cookie_opts() -> dict[str, Any]:
     return out
 
 
+def _safe_video_id(url: str) -> str:
+    """Stable, Windows-safe folder name for any URL.
+
+    YouTube URLs keep their canonical 11-char id so the per-video folder
+    matches existing transcripts. For everything else (podcasts,
+    direct MP3 URLs, etc.), we hash the URL to `aud-<12 hex>` -- short,
+    deterministic so a re-ingest of the same URL re-uses the folder, and
+    free of `?`, `=`, `&`, etc. that yt-dlp's generic extractor leaves
+    in `info["id"]` after a CDN redirect.
+    """
+    yt = extract_video_id(url)
+    if yt:
+        return yt
+    import hashlib
+    h = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+    return f"aud-{h}"
+
+
 def download_audio(
     url: str,
     out_dir: Path,
     *,
     progress_hook=None,
 ) -> tuple[Path, dict[str, Any]]:
-    """Download audio into output/<video_id>/audio.<ext>. Returns the .mp3 path.
+    """Download audio into output/<safe_id>/audio.<ext>. Returns the .mp3 path.
 
     `progress_hook`, if given, is registered with yt-dlp and called from
     yt-dlp's worker thread on every chunk. The hook receives the standard
     yt-dlp progress dict (`status`, `downloaded_bytes`, `total_bytes`,
     `eta`, `speed`, `filename`, ...). Used by `stream_transcription` to
     bump `state.last_event_at` so the live registry doesn't false-fire its
-    "stalled" annotation during long downloads — yt-dlp holds the GIL
+    "stalled" annotation during long downloads -- yt-dlp holds the GIL
     inside its C-backed network loop, so our threaded heartbeat can't
     fire reliably until the download finishes.
+
+    The output folder name is precomputed from the URL via
+    `_safe_video_id()` (NOT from yt-dlp's `info["id"]`). yt-dlp's generic
+    extractor uses the post-redirect URL path -- often with `?query` --
+    as the id, which lands as a literal path segment on Windows and
+    triggers `ValueError(EINVAL)` before the download starts. By feeding
+    yt-dlp a fixed `outtmpl` we sidestep that entirely. We then mutate
+    `info["id"]` so downstream rekey + persistence sees the safe id.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = _safe_video_id(url)
+    target_dir = out_dir / safe_id
     opts: dict[str, Any] = {
         "format": "bestaudio/best",
-        # Per-video subfolder; canonical filename "audio.<ext>".
-        "outtmpl": str(out_dir / "%(id)s" / "audio.%(ext)s"),
+        # Fixed safe folder; canonical filename "audio.<ext>".
+        "outtmpl": str(target_dir / "audio.%(ext)s"),
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
         ],
         "quiet": True,
         "no_warnings": True,
-        # Strip ?, =, &, spaces from yt-dlp's derived `id` before it lands
-        # in the outtmpl path. Podcast hosts redirect to signed URLs like
-        # `audio.buzzsprout.com/<hash>?response-content-disposition=inline`
-        # and yt-dlp's generic extractor uses the post-redirect URL path
-        # (including the query string) as `info["id"]`. On Windows a path
-        # containing `?` raises ValueError(EINVAL) before the download
-        # even starts.
-        "restrictfilenames": True,
         # Tolerance for shaky upstream CDNs. Podcast hosts (Buzzsprout,
         # Megaphone, Libsyn) start dropping connections once they see a
         # burst of requests from one IP -- raising the per-socket timeout
@@ -205,7 +225,12 @@ def download_audio(
     opts.update(_ytdlp_cookie_opts())
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        path = audio_path_for(out_dir, info["id"])
+        # Replace yt-dlp's generic id with our safe folder name so the
+        # caller's `state.rekey(old_id, info["id"])` lands on a stable id
+        # that matches the on-disk folder. For YouTube URLs the safe id
+        # equals what yt-dlp would have returned anyway.
+        info["id"] = safe_id
+        path = audio_path_for(out_dir, safe_id)
         return path, info
 
 
