@@ -7,11 +7,14 @@ import {
   type FormEvent,
 } from "react";
 import { extractVideoId } from "../api";
-import { bulkIngest, previewPlaylist } from "../projects";
+import { bulkIngest, previewPlaylist, previewPodcast } from "../projects";
 import type {
   BulkIngestResponse,
   PlaylistEntry,
   PlaylistPreview,
+  PodcastEpisode,
+  PodcastPreview,
+  PodcastSource,
 } from "../types";
 
 export interface AddVideosModalProps {
@@ -23,7 +26,7 @@ export interface AddVideosModalProps {
   onSuccess: (resp: BulkIngestResponse) => void;
 }
 
-type TabId = "playlist" | "urls";
+type TabId = "playlist" | "podcast" | "urls";
 
 export default function AddVideosModal({
   open,
@@ -40,6 +43,19 @@ export default function AddVideosModal({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [failuresOpen, setFailuresOpen] = useState(false);
+
+  // Podcast tab state
+  const [podcastUrl, setPodcastUrl] = useState("");
+  const [podcastPreview, setPodcastPreview] = useState<PodcastPreview | null>(
+    null,
+  );
+  const [podcastPreviewing, setPodcastPreviewing] = useState(false);
+  const [podcastPreviewError, setPodcastPreviewError] = useState<string | null>(
+    null,
+  );
+  const [podcastSelectedGuids, setPodcastSelectedGuids] = useState<Set<string>>(
+    new Set(),
+  );
 
   // URLs tab state
   const [urlsText, setUrlsText] = useState("");
@@ -60,6 +76,11 @@ export default function AddVideosModal({
     setPreviewError(null);
     setSelectedIds(new Set());
     setFailuresOpen(false);
+    setPodcastUrl("");
+    setPodcastPreview(null);
+    setPodcastPreviewing(false);
+    setPodcastPreviewError(null);
+    setPodcastSelectedGuids(new Set());
     setUrlsText("");
     setSubmitError(null);
     setSubmitting(false);
@@ -131,6 +152,64 @@ export default function AddVideosModal({
     preview.entries.length > 0 &&
     selectedIds.size === preview.entries.length;
 
+  // ----- Podcast handlers ----------------------------------------
+
+  const handlePodcastPreview = useCallback(async () => {
+    const trimmed = podcastUrl.trim();
+    if (!trimmed) return;
+    setPodcastPreviewing(true);
+    setPodcastPreviewError(null);
+    setPodcastPreview(null);
+    try {
+      const p = await previewPodcast(trimmed);
+      setPodcastPreview(p);
+      // Default: every episode selected (single-episode previews still get
+      // their lone guid pre-checked so the submit button is immediately live).
+      setPodcastSelectedGuids(new Set(p.episodes.map((ep) => ep.guid)));
+    } catch (e) {
+      setPodcastPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPodcastPreviewing(false);
+    }
+  }, [podcastUrl]);
+
+  const togglePodcastEpisode = useCallback((guid: string) => {
+    setPodcastSelectedGuids((prev) => {
+      const next = new Set(prev);
+      if (next.has(guid)) next.delete(guid);
+      else next.add(guid);
+      return next;
+    });
+  }, []);
+
+  const selectAllPodcast = useCallback(() => {
+    if (!podcastPreview) return;
+    setPodcastSelectedGuids(
+      new Set(podcastPreview.episodes.map((ep) => ep.guid)),
+    );
+  }, [podcastPreview]);
+
+  const selectNonePodcast = useCallback(
+    () => setPodcastSelectedGuids(new Set()),
+    [],
+  );
+
+  const selectLatestPodcast = useCallback(
+    (n: number) => {
+      if (!podcastPreview) return;
+      // Episodes arrive newest-first per the server contract; take the head.
+      setPodcastSelectedGuids(
+        new Set(podcastPreview.episodes.slice(0, n).map((ep) => ep.guid)),
+      );
+    },
+    [podcastPreview],
+  );
+
+  const allPodcastSelected =
+    podcastPreview !== null &&
+    podcastPreview.episodes.length > 0 &&
+    podcastSelectedGuids.size === podcastPreview.episodes.length;
+
   const handleSubmit = useCallback(
     async (e?: FormEvent) => {
       e?.preventDefault();
@@ -143,6 +222,11 @@ export default function AddVideosModal({
         urls = preview.entries
           .filter((en) => selectedIds.has(en.id))
           .map((en) => en.url);
+      } else if (tab === "podcast") {
+        if (!podcastPreview) return;
+        urls = podcastPreview.episodes
+          .filter((ep) => podcastSelectedGuids.has(ep.guid))
+          .map((ep) => ep.mp3_url);
       } else {
         urls = parsedUrls;
       }
@@ -158,13 +242,27 @@ export default function AddVideosModal({
         setSubmitting(false);
       }
     },
-    [tab, preview, selectedIds, parsedUrls, projectId, onSuccess, submitting],
+    [
+      tab,
+      preview,
+      selectedIds,
+      podcastPreview,
+      podcastSelectedGuids,
+      parsedUrls,
+      projectId,
+      onSuccess,
+      submitting,
+    ],
   );
 
   if (!open) return null;
 
   const selectedCount =
-    tab === "playlist" ? selectedIds.size : parsedUrls.length;
+    tab === "playlist"
+      ? selectedIds.size
+      : tab === "podcast"
+        ? podcastSelectedGuids.size
+        : parsedUrls.length;
 
   return (
     <div
@@ -181,8 +279,8 @@ export default function AddVideosModal({
         <div className="add-videos-header">
           <h2>Add videos</h2>
           <p className="add-videos-sub">
-            Import from a YouTube playlist or paste individual URLs. Everything
-            transcribes locally on your GPU.
+            Import from a YouTube playlist, a podcast feed, or paste individual
+            URLs. Everything transcribes locally on your GPU.
           </p>
         </div>
 
@@ -195,6 +293,15 @@ export default function AddVideosModal({
             onClick={() => setTab("playlist")}
           >
             Playlist URL
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "podcast"}
+            className={`modal-tab ${tab === "podcast" ? "is-active" : ""}`}
+            onClick={() => setTab("podcast")}
+          >
+            Podcast
           </button>
           <button
             type="button"
@@ -224,6 +331,22 @@ export default function AddVideosModal({
               onSelectNone={selectNone}
               failuresOpen={failuresOpen}
               setFailuresOpen={setFailuresOpen}
+            />
+          ) : tab === "podcast" ? (
+            <PodcastTab
+              firstFieldRef={firstFieldRef as React.RefObject<HTMLInputElement>}
+              url={podcastUrl}
+              setUrl={setPodcastUrl}
+              preview={podcastPreview}
+              previewing={podcastPreviewing}
+              previewError={podcastPreviewError}
+              onPreview={handlePodcastPreview}
+              selectedGuids={podcastSelectedGuids}
+              onToggle={togglePodcastEpisode}
+              allSelected={allPodcastSelected}
+              onSelectAll={selectAllPodcast}
+              onSelectNone={selectNonePodcast}
+              onSelectLatest={selectLatestPodcast}
             />
           ) : (
             <UrlsTab
@@ -510,17 +633,263 @@ function UrlsTab({
 }
 
 // -------------------------------------------------------------------
+// Podcast tab
+// -------------------------------------------------------------------
+
+interface PodcastTabProps {
+  firstFieldRef: React.RefObject<HTMLInputElement>;
+  url: string;
+  setUrl: (v: string) => void;
+  preview: PodcastPreview | null;
+  previewing: boolean;
+  previewError: string | null;
+  onPreview: () => void;
+  selectedGuids: Set<string>;
+  onToggle: (guid: string) => void;
+  allSelected: boolean;
+  onSelectAll: () => void;
+  onSelectNone: () => void;
+  onSelectLatest: (n: number) => void;
+}
+
+function PodcastTab({
+  firstFieldRef,
+  url,
+  setUrl,
+  preview,
+  previewing,
+  previewError,
+  onPreview,
+  selectedGuids,
+  onToggle,
+  allSelected,
+  onSelectAll,
+  onSelectNone,
+  onSelectLatest,
+}: PodcastTabProps) {
+  const isSingle =
+    preview !== null &&
+    (preview.source === "spotify_episode" || preview.source === "direct_audio");
+  return (
+    <div className="tab-panel" role="tabpanel">
+      <div className="playlist-input-row">
+        <input
+          ref={firstFieldRef}
+          className="playlist-input"
+          placeholder="https://open.spotify.com/show/... or RSS URL or .mp3 URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          spellCheck={false}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (url.trim() && !previewing) onPreview();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="btn-preview"
+          onClick={onPreview}
+          disabled={!url.trim() || previewing}
+        >
+          {previewing ? "Loading..." : "Preview"}
+        </button>
+      </div>
+
+      {previewError && <div className="form-error">{previewError}</div>}
+
+      {previewing && !preview && (
+        <div className="tab-hint">Resolving feed...</div>
+      )}
+
+      {preview && (
+        <>
+          <div className="playlist-summary">
+            <div className="playlist-title">
+              {preview.title || "Untitled podcast"}
+            </div>
+            <div className="playlist-meta">
+              {preview.publisher ? <span>{preview.publisher}</span> : null}
+              {preview.publisher ? <span className="sep">.</span> : null}
+              <span>
+                {preview.episodes.length} episode
+                {preview.episodes.length === 1 ? "" : "s"}
+              </span>
+              <span className="sep">.</span>
+              <span className="source-chip">
+                {sourceChipLabel(preview.source)}
+              </span>
+            </div>
+          </div>
+
+          {preview.episodes.length > 0 ? (
+            <>
+              {!isSingle && (
+                <div className="playlist-toolbar">
+                  <span className="selected-count">
+                    {selectedGuids.size} of {preview.episodes.length} selected
+                  </span>
+                  <div className="playlist-toolbar-actions">
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onSelectLatest(5)}
+                      disabled={preview.episodes.length === 0}
+                    >
+                      Latest 5
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onSelectLatest(10)}
+                      disabled={preview.episodes.length === 0}
+                    >
+                      Latest 10
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={allSelected ? onSelectNone : onSelectAll}
+                    >
+                      {allSelected ? "Select none" : "Select all"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="playlist-preview">
+                {preview.episodes.map((ep) => (
+                  <PodcastPreviewRow
+                    key={ep.guid}
+                    episode={ep}
+                    showImage={preview.image_url}
+                    checked={selectedGuids.has(ep.guid)}
+                    onToggle={() => onToggle(ep.guid)}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="tab-hint">
+              The feed didn't return any episodes. Try a different URL or check
+              the publisher's RSS feed directly.
+            </div>
+          )}
+        </>
+      )}
+
+      {!preview && !previewing && !previewError && (
+        <div className="tab-hint">
+          Paste a Spotify show or episode URL, an RSS feed URL, or a direct
+          .mp3 URL. We'll resolve it to a list of episodes.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PodcastPreviewRow({
+  episode,
+  showImage,
+  checked,
+  onToggle,
+}: {
+  episode: PodcastEpisode;
+  showImage: string | null;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const thumb = episode.image_url || showImage || null;
+  const safeId = `pc-${episode.guid.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  return (
+    <label
+      className={`preview-row ${checked ? "is-selected" : ""}`}
+      htmlFor={safeId}
+    >
+      <input
+        id={safeId}
+        type="checkbox"
+        checked={checked}
+        onChange={onToggle}
+      />
+      <div className="preview-thumb is-podcast">
+        {thumb ? (
+          <img src={thumb} alt="" loading="lazy" />
+        ) : (
+          <div className="preview-thumb-fallback" aria-hidden="true" />
+        )}
+      </div>
+      <div className="preview-body">
+        <div className="preview-title">{episode.title || "Untitled episode"}</div>
+        <div className="preview-meta">
+          <span>
+            {episode.duration_sec != null
+              ? fmtDuration(episode.duration_sec)
+              : "--"}
+          </span>
+          <span className="sep">.</span>
+          <span>{fmtPubDate(episode.pub_date)}</span>
+        </div>
+      </div>
+    </label>
+  );
+}
+
+// -------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------
 
 function fmtDuration(sec: number): string {
-  if (!isFinite(sec) || sec <= 0) return "—";
+  if (!isFinite(sec) || sec <= 0) return "--";
   const s = Math.floor(sec);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const r = s % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
   return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** Format an ISO-8601 publish date as "DD MMM YYYY". Returns "--" when the
+ *  input is missing or unparseable so meta lines never render NaN. */
+function fmtPubDate(iso: string | null): string {
+  if (!iso) return "--";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "--";
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = MONTHS_SHORT[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  return `${day} ${month} ${year}`;
+}
+
+function sourceChipLabel(source: PodcastSource): string {
+  switch (source) {
+    case "spotify_show":
+      return "spotify show";
+    case "spotify_episode":
+      return "spotify episode";
+    case "rss":
+      return "rss feed";
+    case "direct_audio":
+      return "direct audio";
+    default:
+      return source;
+  }
 }
 
 function Caret({ open }: { open: boolean }) {

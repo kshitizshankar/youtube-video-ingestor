@@ -273,6 +273,36 @@ export interface PlaylistPreview {
   failures: PlaylistFailure[];
 }
 
+// -------------------------------------------------------------------
+// Podcast preview — Spotify show / episode, RSS feed, or direct MP3.
+// -------------------------------------------------------------------
+
+export type PodcastSource =
+  | "spotify_show"
+  | "spotify_episode"
+  | "rss"
+  | "direct_audio";
+
+export interface PodcastEpisode {
+  guid: string;
+  title: string;
+  description: string | null;
+  pub_date: string | null; // ISO-8601 when parseable
+  duration_sec: number | null;
+  mp3_url: string;
+  image_url: string | null;
+}
+
+export interface PodcastPreview {
+  source: PodcastSource;
+  rss_url: string | null;
+  title: string | null;
+  publisher: string | null;
+  description: string | null;
+  image_url: string | null;
+  episodes: PodcastEpisode[];
+}
+
 export interface BulkIngestSkipped {
   video_id: string;
   reason: "already_transcribed" | "archived" | string;

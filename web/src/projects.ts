@@ -3,6 +3,7 @@ import type {
   BulkIngestRequest,
   BulkIngestResponse,
   PlaylistPreview,
+  PodcastPreview,
   Project,
   ProjectDetail,
   Stats,
@@ -95,6 +96,27 @@ export async function previewPlaylist(url: string): Promise<PlaylistPreview> {
       throw new Error(j.detail || `previewPlaylist: ${r.status}`);
     } catch {
       throw new Error(text || `previewPlaylist: ${r.status}`);
+    }
+  }
+  return r.json();
+}
+
+/** Resolve a podcast input (Spotify show / episode, RSS feed, or direct MP3
+ *  URL) into a uniform preview shape. The server does the messy detection +
+ *  RSS parsing; we only render. */
+export async function previewPodcast(url: string): Promise<PodcastPreview> {
+  const r = await authFetch("/api/podcast/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    try {
+      const j = JSON.parse(text);
+      throw new Error(j.detail || `previewPodcast: ${r.status}`);
+    } catch {
+      throw new Error(text || `previewPodcast: ${r.status}`);
     }
   }
   return r.json();

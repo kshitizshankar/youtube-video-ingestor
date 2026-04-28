@@ -3781,6 +3781,7 @@ textarea:focus-visible,
   justify-content: space-between;
   align-items: center;
   padding: 0 2px;
+  gap: 10px;
 }
 .playlist-toolbar .selected-count {
   font-family: var(--font-mono);
@@ -3788,6 +3789,13 @@ textarea:focus-visible,
   color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+.playlist-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .link-btn {
   background: transparent;
@@ -3870,6 +3878,38 @@ textarea:focus-visible,
   border-radius: 4px;
   font-size: 10px;
   color: var(--ink-3);
+}
+
+/* ----- Podcast tab ------------------------------------------- */
+
+/* Source-detection chip in the podcast preview summary. */
+.source-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: lowercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 14%, var(--bg-2));
+  color: var(--ink-2);
+  border: 1px solid color-mix(in oklch, var(--accent) 26%, var(--line));
+}
+
+/* Podcast thumbs are square (cover art) rather than 16:9 (video frame). */
+.preview-thumb.is-podcast {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+}
+.preview-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--accent) 18%, var(--bg-3)),
+      var(--bg-3)
+    );
 }
 
 /* ----- Failures section -------------------------------------- */
@@ -4085,6 +4125,7 @@ textarea:focus-visible,
   .playlist-preview { max-height: 260px; }
   .preview-row { grid-template-columns: 22px 60px 1fr; }
   .preview-thumb { width: 60px; height: 34px; }
+  .preview-thumb.is-podcast { width: 48px; height: 48px; }
   .toast { right: 10px; bottom: 10px; left: 10px; min-width: 0; }
 }
 
