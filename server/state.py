@@ -43,6 +43,12 @@ class IngestStatus:
     # force-killed, so mid-transcribe cancel only takes effect when the
     # current phase finishes (model-load / download / transcribe / diarize).
     cancel_requested: bool = False
+    # Original ingest metadata (podcast path only — None for YouTube). Carries
+    # the rich fields the bulk-podcast endpoint resolved up front (title,
+    # show_name, image_url, …). Persisted with the registry so /retry can
+    # rehydrate the right TranscribeRequest instead of falling back to
+    # yt-dlp's generic extractor and clobbering source -> "youtube".
+    metadata: dict | None = None
 
 
 _INGESTS: dict[str, IngestStatus] = {}
@@ -92,9 +98,13 @@ def _persist_locked() -> None:
         log.warning("failed to persist ingests: %s", e)
 
 
-def begin(video_id: str, url: str | None = None) -> IngestStatus:
+def begin(
+    video_id: str,
+    url: str | None = None,
+    metadata: dict | None = None,
+) -> IngestStatus:
     with _LOCK:
-        st = IngestStatus(id=video_id, url=url)
+        st = IngestStatus(id=video_id, url=url, metadata=metadata)
         _INGESTS[video_id] = st
         _persist_locked()
         return st

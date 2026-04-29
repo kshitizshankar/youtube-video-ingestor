@@ -246,13 +246,85 @@ async def api_retry_ingest(video_id: str, body: dict[str, Any] | None = Body(def
             status_code=400,
             detail="no url on record and none provided — include {\"url\": \"...\"} in the body",
         )
+    # Rehydrate podcast metadata so persist_video_to_db lands on the right
+    # branch (source='podcast', rich title/host/show fields) instead of
+    # the yt-dlp-generic-extractor fallback that would clobber title to a
+    # CDN slug and source to 'youtube'. Sources, in priority order:
+    #   1. The original metadata stashed on the registry by the
+    #      bulk-podcast endpoint. Survives within a server lifetime.
+    #   2. Reconstructed from transcript.json on disk + the videos row,
+    #      for restart-orphaned podcast jobs whose registry entry got
+    #      reloaded with metadata=None (e.g. from a pre-fix server).
+    #   3. None — pure YouTube path; behavior unchanged.
+    metadata: dict | None = None
+    if record is not None and record.metadata:
+        metadata = dict(record.metadata)
+    else:
+        metadata = _reconstruct_podcast_metadata(video_id)
+
     # Drop the old record so the new run starts clean.
     state.drop(video_id)
-    req = TranscribeRequest(url=url)
+    req = TranscribeRequest(url=url, metadata=metadata)
     hf_token = os.environ.get("HUGGINGFACE_TOKEN")
     gen = stream_transcription(req, OUTPUT_DIR, hf_token=hf_token)
     asyncio.create_task(_consume_silently(gen))
     return {"started": True, "video_id": video_id, "url": url}
+
+
+def _reconstruct_podcast_metadata(video_id: str) -> dict | None:
+    """Best-effort fallback: rebuild a podcast metadata dict from disk +
+    DB for a video whose in-memory registry entry has been wiped. Returns
+    None when this isn't a podcast (no special metadata is needed for
+    YouTube retries — yt-dlp's extractor handles those correctly)."""
+    import json as _json
+    tj = video_dir(OUTPUT_DIR, video_id) / "transcript.json"
+    disk: dict = {}
+    if tj.exists():
+        try:
+            disk = _json.loads(tj.read_text(encoding="utf-8"))
+        except Exception:
+            disk = {}
+    src = (disk.get("source") or "").lower()
+    if src != "podcast":
+        # Also peek at the DB row in case transcript.json hasn't been
+        # written yet (early-failure retry).
+        try:
+            conn = open_connection(OUTPUT_DIR / "app.db")
+            try:
+                row = conn.execute(
+                    "SELECT source, title, channel, show_name, show_url, "
+                    "image_url, duration_sec, description "
+                    "FROM videos WHERE id=?",
+                    (video_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            row = None
+        if row is None or (row["source"] or "").lower() != "podcast":
+            return None
+        return {
+            "source": "podcast",
+            "title": row["title"],
+            "host": row["channel"],
+            "show_name": row["show_name"],
+            "show_url": row["show_url"],
+            "image_url": row["image_url"],
+            "pub_date": None,
+            "duration_sec": row["duration_sec"],
+            "description": row["description"],
+        }
+    return {
+        "source": "podcast",
+        "title": disk.get("title"),
+        "host": disk.get("channel"),
+        "show_name": disk.get("show_name"),
+        "show_url": disk.get("show_url"),
+        "image_url": disk.get("image_url"),
+        "pub_date": disk.get("upload_date"),
+        "duration_sec": disk.get("duration_sec"),
+        "description": disk.get("description"),
+    }
 
 
 @app.delete("/api/ingests/{video_id}", dependencies=[Depends(auth.require_http)])
@@ -1003,7 +1075,14 @@ def api_podcast_ingest(body: dict = Body(...)):
             # proper title + duration the moment this returns. Without
             # this, the strip would briefly show the raw URL until the
             # download stage finishes.
-            state.begin(safe_id, url=mp3_url)
+            #
+            # Also stash the resolved podcast metadata on the registry
+            # entry so /api/ingests/{id}/retry can rehydrate it. Without
+            # that, retries would build a bare TranscribeRequest(url=...)
+            # and persist_video_to_db would fall back to yt-dlp's generic
+            # extractor — which produces the cryptic CDN-slug title and
+            # source='youtube' bug we burned a session on.
+            state.begin(safe_id, url=mp3_url, metadata=metadata)
             state.update(
                 safe_id,
                 phase="queued",
