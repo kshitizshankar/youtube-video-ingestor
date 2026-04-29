@@ -9,6 +9,14 @@ export interface IngestCardProps {
   now?: number;
 }
 
+/** Non-YouTube ingest IDs use the `aud-<sha1[:12]>` scheme produced by
+ *  transcriber._safe_video_id() for podcasts and other audio sources.
+ *  We can't ask img.youtube.com for a thumbnail in that case — we'd just
+ *  get a placeholder. */
+function isYouTubeId(id: string): boolean {
+  return !id.startsWith("aud-") && !id.startsWith("pending-");
+}
+
 function fmtMinSec(sec: number): string {
   const s = Math.floor(sec);
   if (s < 60) return `${s}s`;
@@ -30,7 +38,11 @@ export default function IngestCard({ ing, now: nowProp }: IngestCardProps) {
     return () => clearInterval(id);
   }, [nowProp]);
 
-  const thumb = `https://img.youtube.com/vi/${ing.id}/hqdefault.jpg`;
+  const ytThumb = isYouTubeId(ing.id)
+    ? `https://img.youtube.com/vi/${ing.id}/hqdefault.jpg`
+    : null;
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImg = ytThumb !== null && !imgFailed;
   const elapsedSec = Math.max(0, now - ing.started_at);
   const staleSec = Math.max(0, now - ing.last_event_at);
   const pct =
@@ -52,10 +64,25 @@ export default function IngestCard({ ing, now: nowProp }: IngestCardProps) {
   return (
     <Link to={`/v/${ing.id}`} className={cls.join(" ")}>
       <div className="ic-thumb">
-        <img src={thumb} alt="" loading="lazy" />
+        {showImg ? (
+          <img
+            src={ytThumb!}
+            alt=""
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <div className="ic-thumb-fallback" aria-hidden="true">
+            <MicGlyph />
+          </div>
+        )}
       </div>
       <div className="ic-body">
-        <div className="ic-title">{ing.title || ing.id}</div>
+        <div className="ic-title">
+          {ing.title || (
+            <span className="ic-title-fetching">fetching metadata…</span>
+          )}
+        </div>
         <div className="ic-meta">
           <span className="ic-phase">{phaseLabel}</span>
           <span className="ic-sep">·</span>
@@ -79,5 +106,26 @@ export default function IngestCard({ ing, now: nowProp }: IngestCardProps) {
         </div>
       </div>
     </Link>
+  );
+}
+
+function MicGlyph() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M9 21h6" />
+    </svg>
   );
 }

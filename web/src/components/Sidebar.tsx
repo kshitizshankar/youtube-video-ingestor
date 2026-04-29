@@ -5,10 +5,11 @@ import NewProjectModal from "./NewProjectModal";
 
 export interface SidebarProps {
   libraryCount: number;
-  /** Number of currently-running ingests. Drives the "in progress" pill
-   *  surfaced to the user so they can see at-a-glance that something is
-   *  still going even when they're not on the Library page. */
+  /** Currently-running ingests. Drives the "in progress" pill. */
   activeIngestCount?: number;
+  /** Failed ingests (done && error && !cancelled). Drives the "failed"
+   *  surface so the user can jump straight to /queue and bulk-retry. */
+  failedIngestCount?: number;
   onNewIngest: () => void;
 }
 
@@ -16,23 +17,24 @@ type Theme = "dark" | "light";
 
 function readTheme(): Theme {
   try {
-    // Light is the default OK Human surface (paper + plum). The previous
-    // build defaulted to dark; respect any explicitly saved choice but
-    // otherwise fall back to light so first-paint matches the brand.
     return (localStorage.getItem("vvi.theme") as Theme) || "light";
   } catch { return "light"; }
 }
 
-export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewIngest }: SidebarProps) {
+export default function Sidebar({
+  libraryCount,
+  activeIngestCount = 0,
+  failedIngestCount = 0,
+  onNewIngest,
+}: SidebarProps) {
   const loc = useLocation();
   const onDashboard = loc.pathname === "/";
   const onLibrary = loc.pathname.startsWith("/library");
   const onArchive = loc.pathname.startsWith("/archive");
+  const onQueue = loc.pathname.startsWith("/queue");
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [modalOpen, setModalOpen] = useState(false);
 
-  // Single source of truth — list comes from ProjectsContext, mutations
-  // funnel through it so renames/creates/deletes propagate everywhere.
   const { projects: allProjects, create } = useProjects();
   const projects = (allProjects ?? []).slice(0, 8);
 
@@ -50,6 +52,11 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
 
   const toggleTheme = () => setTheme((t) => t === "dark" ? "light" : "dark");
 
+  // Surface the queue link only when there's something to do there.
+  // Failed jobs win over active for visual emphasis (tangerine accent).
+  const queueVisible = activeIngestCount > 0 || failedIngestCount > 0;
+  const queueHasFailures = failedIngestCount > 0;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -59,17 +66,15 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
         </span>
       </div>
 
-      <div className="nav-group">
-        <div className="nav-group-title">library</div>
-        {activeIngestCount > 0 && (
-          <Link to="/library" className="nav-item nav-item-live" title="View live progress">
-            <span className="nav-pulse" aria-hidden>
-              <span className="pulse-core" />
-              <span className="pulse-ring" />
-            </span>
-            <span>{activeIngestCount} in progress</span>
-          </Link>
-        )}
+      {/* Primary CTA — the one action that wears the tangerine. */}
+      <div className="sidebar-cta">
+        <button type="button" className="btn btn-accent btn-cta-block" onClick={onNewIngest}>
+          <PlusIcon /> add video
+          <span className="btn-cta-kbd">CTRL N</span>
+        </button>
+      </div>
+
+      <div className="nav-group nav-group-flush">
         <Link to="/" className={`nav-item ${onDashboard ? "active" : ""}`}>
           <DashIcon />
           <span>dashboard</span>
@@ -86,11 +91,41 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
           <ArchiveIcon />
           <span>archive</span>
         </Link>
-        <button className="nav-item" onClick={onNewIngest}>
-          <PlusIcon />
-          <span>add video</span>
-          <span className="count">CTRL N</span>
-        </button>
+        {queueVisible && (
+          <Link
+            to="/queue"
+            className={[
+              "nav-item",
+              "nav-item-queue",
+              onQueue ? "active" : "",
+              queueHasFailures ? "has-failures" : "",
+            ].join(" ").trim()}
+            title={queueHasFailures
+              ? `${failedIngestCount} failed · ${activeIngestCount} active`
+              : "View live progress"}
+          >
+            {queueHasFailures ? (
+              <span className="queue-bang" aria-hidden>!</span>
+            ) : (
+              <span className="nav-pulse" aria-hidden>
+                <span className="pulse-core" />
+                <span className="pulse-ring" />
+              </span>
+            )}
+            <span>queue</span>
+            <span className="count count-stack">
+              {activeIngestCount > 0 && (
+                <span className="count-active">{activeIngestCount}</span>
+              )}
+              {queueHasFailures && (
+                <span className="count-failed">
+                  {activeIngestCount > 0 ? " · " : ""}
+                  {failedIngestCount} failed
+                </span>
+              )}
+            </span>
+          </Link>
+        )}
       </div>
 
       <div className="nav-group">
@@ -109,7 +144,7 @@ export default function Sidebar({ libraryCount, activeIngestCount = 0, onNewInge
             </Link>
           );
         })}
-        <button className="nav-item" onClick={() => setModalOpen(true)}>
+        <button className="nav-item nav-item-muted" onClick={() => setModalOpen(true)}>
           <PlusIcon />
           <span>new project</span>
         </button>

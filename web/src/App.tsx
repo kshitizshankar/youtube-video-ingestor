@@ -18,6 +18,7 @@ import Detail from "./Detail";
 import Library from "./Library";
 import Project from "./Project";
 import { ProjectsProvider } from "./ProjectsContext";
+import Queue from "./Queue";
 import Settings from "./Settings";
 import { useActiveIngests } from "./useActiveIngests";
 import type { TranscriptSummary } from "./types";
@@ -82,6 +83,9 @@ function Shell() {
   // refreshKey when an ingest finishes) the library/dashboard counts.
   const ingests = useActiveIngests();
   const activeIngestCount = ingests.filter((i) => !i.done).length;
+  const failedIngestCount = ingests.filter(
+    (i) => i.done && i.error && !i.cancel_requested,
+  ).length;
 
   // Tab title reflects active jobs so a backgrounded tab still tells the
   // user something is running. Reset to the base title when nothing is
@@ -107,6 +111,7 @@ function Shell() {
       <Sidebar
         libraryCount={items.length}
         activeIngestCount={activeIngestCount}
+        failedIngestCount={failedIngestCount}
         onNewIngest={() => setIngestOpen(true)}
       />
       <button
@@ -150,6 +155,16 @@ function Shell() {
         <Route
           path="/p/:projectId"
           element={<Project onMenuToggle={toggleDrawer} />}
+        />
+        <Route
+          path="/queue"
+          element={
+            <Queue
+              onMenuToggle={toggleDrawer}
+              onAdd={() => setIngestOpen(true)}
+              onIngestDone={refresh}
+            />
+          }
         />
         <Route path="/archive" element={<Archive onMenuToggle={toggleDrawer} />} />
         <Route path="/settings" element={<Settings onMenuToggle={toggleDrawer} />} />

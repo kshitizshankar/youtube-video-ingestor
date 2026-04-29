@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import TopBar from "./components/TopBar";
-import IngestStrip from "./components/IngestStrip";
 import ProjectCard from "./components/ProjectCard";
 import StatsStrip from "./components/StatsStrip";
 import NewProjectModal from "./components/NewProjectModal";
@@ -108,7 +108,37 @@ export default function Dashboard({ onMenuToggle, onAdd }: DashboardProps) {
         }
       />
       <div className="dash-body">
-        <IngestStrip ingests={ingests} />
+        {(() => {
+          const active = ingests.filter((i) => !i.done).length;
+          const failed = ingests.filter(
+            (i) => i.done && i.error && !i.cancel_requested,
+          ).length;
+          if (active === 0 && failed === 0) return null;
+          return (
+            <Link
+              to="/queue"
+              className={`status-banner ${failed > 0 ? "has-failures" : ""}`}
+            >
+              <span className="status-banner-dot" aria-hidden />
+              <span className="status-banner-text">
+                {failed > 0 && (
+                  <strong>
+                    {failed} ingest{failed === 1 ? "" : "s"} failed
+                  </strong>
+                )}
+                {failed > 0 && active > 0 && (
+                  <span className="status-banner-sep"> · </span>
+                )}
+                {active > 0 && (
+                  <span>{active} in progress</span>
+                )}
+              </span>
+              <span className="status-banner-cta">
+                review queue <ArrowIcon />
+              </span>
+            </Link>
+          );
+        })()}
         <section className="dash-hero">
           <h1>your projects.</h1>
           <div className="dash-hero-actions">
@@ -172,6 +202,14 @@ function PlusIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14M13 6l6 6-6 6" />
     </svg>
   );
 }

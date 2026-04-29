@@ -127,7 +127,7 @@ export default function Settings({ onMenuToggle }: SettingsProps) {
   return (
     <div className="main">
       <TopBar
-        crumbs={[{ label: "library", to: "/" }, "settings"]}
+        crumbs={[{ label: "dashboard", to: "/" }, "settings"]}
         leading={
           onMenuToggle && (
             <button

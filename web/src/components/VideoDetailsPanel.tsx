@@ -4,7 +4,14 @@ import type { Segment, VideoMeta } from "../types";
 
 export interface VideoDetailsPanelProps {
   videoId: string;
-  videoUrl: string | null;   // the YouTube URL
+  /** Discriminator that drives the action row's label/icon — "YouTube URL"
+   *  for YouTube videos, "Show URL" for podcasts. Defaulting to "youtube"
+   *  preserves legacy behavior for rows without a source field. */
+  source?: "youtube" | "podcast";
+  /** The canonical human-facing URL for this video. For YouTube this is the
+   *  watch URL; for podcasts it's the show page (Spotify / RSS), never the
+   *  raw mp3 CDN. May be null for podcasts that didn't carry a show URL. */
+  videoUrl: string | null;
   shareUrl: string;          // the Vidan /v/<id> URL
   diarized: boolean;
   segments: Segment[];
@@ -16,7 +23,7 @@ export interface VideoDetailsPanelProps {
 }
 
 export default function VideoDetailsPanel({
-  videoId, videoUrl, shareUrl, diarized, segments,
+  videoId, source = "youtube", videoUrl, shareUrl, diarized, segments,
   meta, onMetaChange, onArchive, onMetadataRefreshed,
 }: VideoDetailsPanelProps) {
   const detected = useDetectedSpeakers(segments);
@@ -25,6 +32,7 @@ export default function VideoDetailsPanel({
     <aside className="details-panel">
       <ActionRow
         videoId={videoId}
+        source={source}
         videoUrl={videoUrl}
         shareUrl={shareUrl}
         onArchive={onArchive}
@@ -100,9 +108,10 @@ function SpeakersGlyph() {
    ----------------------------------------------------------------- */
 
 function ActionRow({
-  videoId, videoUrl, shareUrl, onArchive, onMetadataRefreshed,
+  videoId, source, videoUrl, shareUrl, onArchive, onMetadataRefreshed,
 }: {
   videoId: string;
+  source: "youtube" | "podcast";
   videoUrl: string | null;
   shareUrl: string;
   onArchive?: () => void;
@@ -110,6 +119,18 @@ function ActionRow({
 }) {
   const [copied, setCopied] = useState<"" | "yt" | "share">("");
   const [refreshing, setRefreshing] = useState(false);
+
+  // Source-aware labels/icons for the second copy/open buttons. The first
+  // button is always "Copy link" (the share URL); the second is the
+  // canonical source URL — different per provider.
+  const isPodcast = source === "podcast";
+  const sourceCopyLabel = isPodcast ? "Show URL" : "YouTube URL";
+  const sourceCopyTitle = isPodcast
+    ? "Copy the original show URL"
+    : "Copy the original YouTube URL";
+  const sourceOpenLabel = isPodcast ? "Open show" : "Open";
+  const sourceOpenTitle = isPodcast ? "Open the show page" : "Open on YouTube";
+  const SourceIcon = isPodcast ? PodcastGlyph : YTIcon;
 
   const copy = useCallback(async (kind: "yt" | "share", text: string) => {
     try {
@@ -145,10 +166,10 @@ function ActionRow({
             type="button"
             className="dp-action"
             onClick={() => copy("yt", videoUrl)}
-            title="Copy the original YouTube URL"
+            title={sourceCopyTitle}
           >
-            {copied === "yt" ? <CheckIcon /> : <YTIcon />}
-            <span>{copied === "yt" ? "Copied!" : "YouTube URL"}</span>
+            {copied === "yt" ? <CheckIcon /> : <SourceIcon />}
+            <span>{copied === "yt" ? "Copied!" : sourceCopyLabel}</span>
           </button>
         )}
         {videoUrl && (
@@ -157,9 +178,9 @@ function ActionRow({
             href={videoUrl}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open on YouTube"
+            title={sourceOpenTitle}
           >
-            <ExternalIcon /> Open
+            <ExternalIcon /> {sourceOpenLabel}
           </a>
         )}
         <button
@@ -434,6 +455,26 @@ function YTIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="#ff0033">
       <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+    </svg>
+  );
+}
+function PodcastGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M9 21h6" />
     </svg>
   );
 }

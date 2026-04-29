@@ -5020,3 +5020,457 @@ html:not(.theme-light) .thumb-fallback { background: rgba(243, 236, 220, 0.10); 
   color: var(--ok-tangerine);
   flex-shrink: 0;
 }
+
+/* ==============================================================
+   V2.1 — sidebar CTA, status banner, queue page, filter dropdown
+   ============================================================== */
+
+/* --- Sidebar primary CTA -------------------------------------- */
+
+.sidebar-cta {
+  padding: 14px 14px 6px;
+}
+.btn-cta-block {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 10px 14px;
+  gap: 10px;
+}
+.btn-cta-block .btn-cta-kbd {
+  margin-left: auto;
+  font-family: var(--ok-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+/* Tighten the first nav group below the CTA — no extra title padding. */
+.nav-group-flush { padding-top: 6px; }
+
+/* The "queue" nav-item: pulses for active, alarms for failed. */
+.nav-item-queue {
+  position: relative;
+}
+.nav-item-queue.has-failures {
+  background: var(--ok-tangerine-08);
+  border-left-color: var(--ok-tangerine);
+  color: var(--ink);
+  font-weight: 600;
+}
+.nav-item-queue.has-failures:hover {
+  background: var(--ok-tangerine-15);
+}
+.nav-item-queue .queue-bang {
+  display: inline-grid;
+  place-items: center;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--ok-tangerine);
+  color: var(--ok-paper);
+  font-family: var(--ok-font-display);
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.nav-item-queue .count-stack {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  letter-spacing: 0.04em;
+}
+.nav-item-queue .count-active { color: var(--ok-plum-78); }
+.nav-item-queue .count-failed { color: var(--ok-tangerine); font-weight: 600; }
+.nav-item-queue.has-failures .count-active { color: var(--ok-plum-78); }
+
+/* "new project" affordance — kept subtle so it doesn't compete. */
+.nav-item-muted {
+  color: var(--ok-plum-55);
+  font-style: italic;
+}
+html:not(.theme-light) .nav-item-muted { color: rgba(243, 236, 220, 0.55); }
+
+/* --- Status banner (Library / Dashboard) ---------------------- */
+
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 32px;
+  border-bottom: 1px solid var(--ok-rule);
+  background: var(--ok-plum-04);
+  text-decoration: none;
+  color: var(--ok-plum-78);
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: background 120ms ease;
+}
+.status-banner:hover { background: var(--ok-plum-08); color: var(--ink); }
+html:not(.theme-light) .status-banner {
+  background: rgba(243, 236, 220, 0.05);
+  border-bottom-color: rgba(243, 236, 220, 0.10);
+  color: rgba(243, 236, 220, 0.78);
+}
+html:not(.theme-light) .status-banner:hover { background: rgba(243, 236, 220, 0.10); }
+.status-banner.has-failures {
+  background: var(--ok-tangerine-08);
+  color: var(--ink);
+  border-bottom-color: color-mix(in srgb, var(--ok-tangerine) 30%, var(--ok-rule));
+}
+.status-banner.has-failures:hover { background: var(--ok-tangerine-15); }
+.status-banner-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ok-plum-60);
+  flex-shrink: 0;
+}
+.status-banner.has-failures .status-banner-dot {
+  background: var(--ok-tangerine);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok-tangerine) 25%, transparent);
+}
+.status-banner-text strong {
+  font-weight: 700;
+  color: var(--ok-tangerine);
+  letter-spacing: 0.08em;
+}
+.status-banner-sep { color: var(--ok-plum-25); margin: 0 4px; }
+.status-banner-cta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  color: var(--ink);
+}
+.status-banner.has-failures .status-banner-cta { color: var(--ok-tangerine); }
+
+/* --- Library hero compaction ---------------------------------- */
+
+.library-hero-tight {
+  padding: 28px 32px 22px;
+}
+.library-hero-tight h2 { font-size: 40px; }
+.library-hero-tight .sub { margin-top: 10px; font-size: 13.5px; }
+.library-hero-tight .stat .n { font-size: 26px; }
+
+/* --- Single filter row + project dropdown --------------------- */
+
+.filters-single {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.filters-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-pill-wrap {
+  position: relative;
+  display: inline-block;
+}
+.filter-pill-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--ok-radius-sm);
+  border: 1px solid var(--ok-plum-15);
+  background: transparent;
+  color: var(--ok-plum-78);
+  font-family: var(--ok-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.filter-pill-trigger:hover {
+  background: var(--ok-plum-04);
+  border-color: var(--ok-plum);
+  color: var(--ink);
+}
+.filter-pill-trigger.is-active {
+  background: var(--ok-plum);
+  color: var(--ok-bone);
+  border-color: var(--ok-plum);
+}
+html:not(.theme-light) .filter-pill-trigger { color: rgba(243, 236, 220, 0.78); }
+html:not(.theme-light) .filter-pill-trigger.is-active {
+  background: var(--ok-bone);
+  color: var(--ok-plum);
+  border-color: var(--ok-bone);
+}
+.filter-pill-count {
+  font-family: var(--ok-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  padding-left: 4px;
+  border-left: 1px solid currentColor;
+  margin-left: 2px;
+}
+.filter-pill-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 220px;
+  background: var(--bg);
+  border: 1px solid var(--ok-plum);
+  border-radius: var(--ok-radius-sm);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md);
+}
+.filter-pill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--ok-font-body);
+  font-size: 12.5px;
+  color: var(--ok-plum-78);
+  background: transparent;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 0;
+  cursor: pointer;
+  gap: 12px;
+}
+.filter-pill-item:hover { background: var(--ok-plum-04); color: var(--ink); }
+.filter-pill-item.active { background: var(--ok-plum); color: var(--ok-bone); }
+.filter-pill-item-count {
+  font-family: var(--ok-font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.filter-pill-item.active .filter-pill-item-count { opacity: 0.85; }
+
+/* --- Queue page ----------------------------------------------- */
+
+.queue-page { background: var(--bg); }
+.queue-body {
+  flex: 1;
+  overflow: auto;
+  padding: 32px 32px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.queue-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 32px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ok-rule);
+}
+html:not(.theme-light) .queue-hero { border-bottom-color: rgba(243, 236, 220, 0.10); }
+.queue-kicker {
+  display: inline-block;
+  font-family: var(--ok-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ok-tangerine);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.queue-hero h1 {
+  margin: 0;
+  font-family: var(--ok-font-display);
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-transform: lowercase;
+  color: var(--ink);
+}
+.queue-sub {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--ok-plum-60);
+  max-width: 70ch;
+  line-height: 1.5;
+}
+html:not(.theme-light) .queue-sub { color: rgba(243, 236, 220, 0.6); }
+.queue-bulk { display: flex; align-items: center; gap: 8px; }
+
+.queue-empty {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--ok-plum-55);
+  font-family: var(--ok-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+.queue-empty .accent { color: var(--ok-tangerine); }
+
+.queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--ok-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.queue-section-label { color: var(--ok-plum-78); font-weight: 700; }
+.queue-section-failed .queue-section-label { color: var(--ok-tangerine); }
+.queue-section-count { color: var(--ok-plum-55); font-weight: 500; }
+
+.queue-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.queue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 12px;
+}
+/* Override .job-card width inside queue rows so retry/cancel sit beside it. */
+.queue-row .job-card { width: 100%; }
+.queue-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* --- IngestCard fallback thumb -------------------------------- */
+
+.ic-thumb-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    135deg,
+    var(--ok-bone) 0%,
+    var(--ok-bone-2) 100%
+  );
+  color: var(--ok-plum-60);
+}
+html:not(.theme-light) .ic-thumb-fallback {
+  background: linear-gradient(
+    135deg,
+    rgba(243, 236, 220, 0.12) 0%,
+    rgba(243, 236, 220, 0.06) 100%
+  );
+  color: rgba(243, 236, 220, 0.6);
+}
+
+.ic-title-fetching {
+  color: var(--ok-plum-55);
+  font-style: italic;
+  font-weight: 400;
+}
+html:not(.theme-light) .ic-title-fetching { color: rgba(243, 236, 220, 0.55); }
+
+.project-search {
+  padding: 4px 0 16px;
+  display: flex;
+  justify-content: flex-start;
+}
+.project-search .searchbar { max-width: 720px; width: 100%; }
+
+/* --- "Fix metadata" banner for ID-as-title rows --------------- */
+
+.broken-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 32px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ok-tangerine) 30%, var(--ok-rule));
+  background: var(--ok-tangerine-08);
+  color: var(--ink);
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.broken-banner-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ok-tangerine);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok-tangerine) 25%, transparent);
+}
+.broken-banner-text strong {
+  font-weight: 700;
+  color: var(--ok-tangerine);
+  letter-spacing: 0.08em;
+}
+.broken-banner-report {
+  color: var(--ok-plum-60);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+  margin-left: 4px;
+}
+.broken-banner .btn { margin-left: auto; }
+
+/* --- Title-matches section in search results ----------------- */
+
+.title-matches {
+  background: var(--bg);
+  padding: 16px 0 8px;
+  border-bottom: 1px solid var(--ok-rule);
+}
+html:not(.theme-light) .title-matches { border-bottom-color: rgba(243, 236, 220, 0.10); }
+.title-matches-head {
+  padding: 0 32px 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--ok-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.title-matches-label { color: var(--ok-tangerine); font-weight: 700; }
+.title-matches-count { color: var(--ok-plum-55); }
+.row-head-compact { padding-top: 0; padding-bottom: 8px; }
+
+@media (max-width: 720px) {
+  .broken-banner { padding: 10px 18px; font-size: 10px; flex-wrap: wrap; }
+  .broken-banner .btn { margin-left: 0; width: 100%; justify-content: center; }
+  .title-matches-head { padding: 0 18px 10px; }
+}
+
+/* --- Mobile: queue rows stack and project dropdown stays open right */
+@media (max-width: 720px) {
+  .queue-row {
+    grid-template-columns: 1fr;
+  }
+  .queue-row-actions {
+    justify-content: flex-end;
+  }
+  .queue-hero {
+    grid-template-columns: 1fr;
+  }
+  .queue-hero h1 { font-size: 30px; }
+  .filter-pill-menu { left: auto; right: 0; }
+  .library-hero-tight { padding: 18px 18px 14px; }
+  .library-hero-tight h2 { font-size: 30px; }
+  .status-banner { padding: 10px 18px; font-size: 10.5px; }
+}

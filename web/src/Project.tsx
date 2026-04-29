@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import TopBar from "./components/TopBar";
 import VideoRow from "./components/VideoRow";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddVideosModal from "./components/AddVideosModal";
 import IngestCard from "./components/IngestCard";
+import SearchBar from "./components/SearchBar";
 import Toast, { type ToastKind } from "./components/Toast";
-import { type IngestState, listIngests } from "./api";
+import { type IngestState, listIngests, listTranscripts } from "./api";
 import { getProject } from "./projects";
 import { useProjects } from "./ProjectsContext";
 import type {
@@ -21,9 +22,24 @@ export interface ProjectPageProps {
 }
 
 /** Adapt a ProjectVideoEntry (shape returned by /api/projects/:id) into the
- *  TranscriptSummary shape VideoRow expects. Fields not supplied by the
- *  project endpoint get safe defaults. */
-function entryToSummary(v: ProjectVideoEntry): TranscriptSummary {
+ *  TranscriptSummary shape VideoRow expects. When a global library summary
+ *  is available for this id, prefer its fields — that's where source +
+ *  image_url + diarized + segment_count etc. live. The project endpoint
+ *  itself doesn't carry those today. */
+function entryToSummary(
+  v: ProjectVideoEntry,
+  fromLibrary?: TranscriptSummary,
+): TranscriptSummary {
+  if (fromLibrary) {
+    // Library summary is authoritative; only fall back to entry fields
+    // when something's actually missing (channel/duration drift).
+    return {
+      ...fromLibrary,
+      title: fromLibrary.title || v.title || v.id,
+      duration_sec: fromLibrary.duration_sec ?? v.duration_sec,
+      channel: fromLibrary.channel ?? v.channel,
+    };
+  }
   return {
     id: v.id,
     title: v.title ?? v.id,
@@ -33,11 +49,12 @@ function entryToSummary(v: ProjectVideoEntry): TranscriptSummary {
     model: null,
     segment_count: 0,
     channel: v.channel,
-    // ProjectVideoEntry doesn't carry a source today; default to "youtube" so
-    // legacy rows render with the YT glyph + thumbnail. Once the project
-    // endpoint starts returning source, thread it through here.
     source: "youtube",
   };
+}
+
+function tokenize(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/\s+/g, " ").trim();
 }
 
 interface ToastState {
@@ -62,6 +79,8 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
     message: "",
   });
   const [projectIngests, setProjectIngests] = useState<IngestState[]>([]);
+  const [librarySummaries, setLibrarySummaries] = useState<TranscriptSummary[]>([]);
+  const [search, setSearch] = useState("");
 
   // Mutations funnel through the context so the sidebar/library stay in sync.
   const {
@@ -101,6 +120,23 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // Pull the global library so we can layer real source + image_url + diarized
+  // counts onto each project video. Re-fetched whenever project membership
+  // changes (data update) — listTranscripts is cheap on localhost.
+  useEffect(() => {
+    let cancelled = false;
+    listTranscripts()
+      .then((rows) => { if (!cancelled) setLibrarySummaries(rows); })
+      .catch(() => { /* swallow */ });
+    return () => { cancelled = true; };
+  }, [data?.videos.length]);
+
+  const summaryById = useMemo(() => {
+    const m = new Map<string, TranscriptSummary>();
+    for (const s of librarySummaries) m.set(s.id, s);
+    return m;
+  }, [librarySummaries]);
 
   // Poll /api/ingests for in-flight jobs that belong to this project. Filters
   // locally by video ID — backend doesn't yet scope /api/ingests by project.
@@ -362,16 +398,44 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
           </section>
         )}
 
+        {videos.length > 0 && (
+          <div className="project-search">
+            <SearchBar
+              value={search}
+              onChange={setSearch}
+              placeholder={`search inside ${project.name.toLowerCase()}…`}
+            />
+          </div>
+        )}
+
         <section className="project-videos">
           {videos.length === 0 && projectIngests.length === 0 ? (
             <div className="empty">
               no videos yet. click <span className="accent">add videos</span> to
               import from a playlist or paste urls.
             </div>
-          ) : (
-            videos.map((v) => (
+          ) : (() => {
+            const q = tokenize(search);
+            const matches = q
+              ? videos.filter((v) => {
+                  const summary = summaryById.get(v.id);
+                  const hay = [
+                    summary?.title ?? v.title ?? "",
+                    summary?.channel ?? v.channel ?? "",
+                  ].map(tokenize).join(" ");
+                  return hay.includes(q);
+                })
+              : videos;
+            if (matches.length === 0) {
+              return (
+                <div className="empty">
+                  no videos match &ldquo;{search}&rdquo;.
+                </div>
+              );
+            }
+            return matches.map((v) => (
               <div key={v.id} className="project-video-row">
-                <VideoRow v={entryToSummary(v)} />
+                <VideoRow v={entryToSummary(v, summaryById.get(v.id))} />
                 <button
                   type="button"
                   className="row-action row-action-danger project-row-remove"
@@ -382,8 +446,8 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
                   Remove
                 </button>
               </div>
-            ))
-          )}
+            ));
+          })()}
         </section>
       </div>
 

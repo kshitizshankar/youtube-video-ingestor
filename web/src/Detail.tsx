@@ -541,7 +541,7 @@ export default function Detail({
           )
         }
         crumbs={[
-          { label: "library", to: "/" },
+          { label: "library", to: "/library" },
           title,
         ]}
         actions={
@@ -733,11 +733,13 @@ export default function Detail({
           </div>
           <VideoDetailsPanel
             videoId={videoId}
+            source={transcript?.source ?? "youtube"}
             videoUrl={
-              transcript?.url
-              ?? (transcript?.source === "podcast"
-                ? null
-                : `https://www.youtube.com/watch?v=${videoId}`)
+              transcript?.source === "podcast"
+                // For podcasts, the human-facing URL is the show page (Spotify
+                // show / RSS feed), NOT transcript.url which is the mp3 CDN.
+                ? (transcript.show_url ?? null)
+                : (transcript?.url ?? `https://www.youtube.com/watch?v=${videoId}`)
             }
             shareUrl={`${window.location.origin}/v/${videoId}`}
             diarized={diarized}

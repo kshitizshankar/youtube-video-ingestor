@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   archiveVideo,
   type IngestState,
   listIngests,
   listTranscripts,
+  refreshMetadata,
   type SearchHit,
   searchTranscripts,
 } from "./api";
 import { useProjects } from "./ProjectsContext";
-import IngestStrip from "./components/IngestStrip";
 import SearchBar from "./components/SearchBar";
 import SearchResults from "./components/SearchResults";
 import TopBar from "./components/TopBar";
@@ -38,6 +38,24 @@ function totalHours(items: TranscriptSummary[]): string {
   return `${h.toFixed(1)}h`;
 }
 
+/** A row's title is an opaque ID when:
+ *  - it equals the row id
+ *  - it's empty
+ *  - it's a bare alphanumeric/underscore/dash slug with no whitespace,
+ *    long enough that it can't reasonably be a real human title.
+ *  Used to surface "needs metadata refresh" rows. */
+function isOpaqueId(title: string | null | undefined, id: string): boolean {
+  if (!title) return true;
+  if (title === id) return true;
+  if (title.trim().length === 0) return true;
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(title) && !/\s/.test(title)) return true;
+  return false;
+}
+
+function tokenize(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/\s+/g, " ").trim();
+}
+
 export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProps) {
   const [items, setItems] = useState<TranscriptSummary[]>([]);
   const [filter, setFilter] = useState<"all" | "diarized">("all");
@@ -50,15 +68,14 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   const [searchElapsedMs, setSearchElapsedMs] = useState<number | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("recent");
   const [sortOpen, setSortOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixReport, setFixReport] = useState<string | null>(null);
   const searchGenRef = useRef(0);
 
-  // Project list comes from the global context — when it gets renamed
-  // anywhere in the app, the chip strip updates automatically.
   const { projects: ctxProjects, projectsById } = useProjects();
   const projects = ctxProjects ?? [];
 
-  // Project filter is URL-driven so deep links from Project pages preselect it.
-  // Empty / missing => "all projects".
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedProjectId = searchParams.get("project") || null;
   const setSelectedProject = useCallback(
@@ -75,15 +92,15 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
     listTranscripts().then(setItems).catch(console.error);
   }, [refreshKey]);
 
-  // If a previously-selected project disappears (deleted in another tab),
-  // silently fall back to "all".
   useEffect(() => {
     if (selectedProjectId && ctxProjects && !projectsById.has(selectedProjectId)) {
       setSelectedProject(null);
     }
   }, [selectedProjectId, ctxProjects, projectsById, setSelectedProject]);
 
-  // Poll active ingests so we can show a "currently ingesting" strip.
+  // Poll active ingests so the failed-jobs banner stays live without
+  // requiring the user to navigate away. The IngestStrip moved to /queue;
+  // here we only track counts for the at-a-glance status pill.
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
@@ -91,8 +108,6 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         const data = await listIngests();
         if (cancelled) return;
         setIngests(data);
-        // When an ingest transitions to done, bump the transcripts list too
-        // so the new row appears without a manual refresh.
         if (data.some((i) => i.done)) {
           listTranscripts().then((v) => { if (!cancelled) setItems(v); }).catch(() => {});
         }
@@ -124,7 +139,6 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         break;
       case "recent":
       default:
-        // Server already returns videos in created_at DESC order; keep that.
         break;
     }
     return sorted;
@@ -141,7 +155,6 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
     }
   }, []);
 
-  // Debounced search across all transcripts.
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -159,7 +172,7 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
     const timer = window.setTimeout(async () => {
       try {
         const resp = await searchTranscripts(trimmed);
-        if (searchGenRef.current !== gen) return; // stale
+        if (searchGenRef.current !== gen) return;
         setHits(resp.results);
         setSearchTruncated(resp.truncated);
         setSearchElapsedMs(Math.round(performance.now() - t0));
@@ -174,6 +187,83 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
   }, [query]);
 
   const inSearchMode = query.trim().length >= 2;
+
+  // Title + channel matches against the local items list. These are computed
+  // synchronously on every keystroke so the user sees something the moment
+  // they type, even before the server-side transcript search returns.
+  const titleMatches = useMemo<TranscriptSummary[]>(() => {
+    if (!inSearchMode) return [];
+    const q = tokenize(query);
+    return items.filter((v) => {
+      const hay = [v.title, v.channel ?? ""]
+        .map(tokenize)
+        .join(" ");
+      return hay.includes(q);
+    });
+  }, [items, query, inSearchMode]);
+
+  // Rows whose title looks like an ID — server-side metadata fetch failed
+  // or never ran. The user can bulk-refresh them via the banner.
+  const brokenRows = useMemo(
+    () => items.filter((v) => isOpaqueId(v.title, v.id)),
+    [items],
+  );
+
+  const handleFixMetadata = useCallback(async () => {
+    if (brokenRows.length === 0 || fixBusy) return;
+    setFixBusy(true);
+    setFixReport(null);
+    const CONCURRENCY = 3;
+    let next = 0;
+    let ok = 0;
+    const errors: string[] = [];
+    async function worker() {
+      while (true) {
+        const idx = next++;
+        if (idx >= brokenRows.length) return;
+        const r = brokenRows[idx];
+        try {
+          await refreshMetadata(r.id);
+          ok++;
+        } catch (e) {
+          errors.push(`${r.id}: ${e}`);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    setFixBusy(false);
+    setFixReport(
+      errors.length === 0
+        ? `Fixed ${ok}.`
+        : `Fixed ${ok}, failed ${errors.length}. (${errors.slice(0, 2).join("; ")}${errors.length > 2 ? "..." : ""})`,
+    );
+    // Reload the library list so refreshed titles appear.
+    listTranscripts().then(setItems).catch(() => {});
+  }, [brokenRows, fixBusy]);
+
+  // Counts for the status banner at the top of the page.
+  const activeJobCount = ingests.filter((i) => !i.done).length;
+  const failedJobCount = ingests.filter(
+    (i) => i.done && i.error && !i.cancel_requested,
+  ).length;
+
+  const selectedProject = selectedProjectId
+    ? projectsById.get(selectedProjectId) ?? null
+    : null;
+
+  // Close the project dropdown on outside click. Cheap document-level
+  // listener; only attached while the menu is open.
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".filter-pill-menu")) return;
+      if (target?.closest(".filter-pill-trigger")) return;
+      setProjectMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [projectMenuOpen]);
 
   return (
     <div className="main">
@@ -198,10 +288,58 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         }
       />
       <div className="library">
-        {ingests.length > 0 && (
-          <IngestStrip ingests={ingests} />
+        {(activeJobCount > 0 || failedJobCount > 0) && (
+          <Link
+            to="/queue"
+            className={`status-banner ${failedJobCount > 0 ? "has-failures" : ""}`}
+          >
+            <span className="status-banner-dot" aria-hidden />
+            <span className="status-banner-text">
+              {failedJobCount > 0 && (
+                <strong>
+                  {failedJobCount} ingest{failedJobCount === 1 ? "" : "s"} failed
+                </strong>
+              )}
+              {failedJobCount > 0 && activeJobCount > 0 && (
+                <span className="status-banner-sep"> · </span>
+              )}
+              {activeJobCount > 0 && (
+                <span>
+                  {activeJobCount} in progress
+                </span>
+              )}
+            </span>
+            <span className="status-banner-cta">
+              review queue <ArrowIcon />
+            </span>
+          </Link>
         )}
-        <div className="library-hero">
+
+        {brokenRows.length > 0 && (
+          <div className="broken-banner" role="status">
+            <span className="broken-banner-dot" aria-hidden />
+            <span className="broken-banner-text">
+              <strong>
+                {brokenRows.length} video{brokenRows.length === 1 ? "" : "s"}
+              </strong>{" "}
+              {brokenRows.length === 1 ? "has" : "have"} an ID instead of a title
+              {fixReport && (
+                <span className="broken-banner-report"> · {fixReport}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleFixMetadata}
+              disabled={fixBusy}
+              title="Re-run yt-dlp metadata extraction for each affected video"
+            >
+              {fixBusy ? "fixing..." : "fix metadata"}
+            </button>
+          </div>
+        )}
+
+        <div className="library-hero library-hero-tight">
           <div>
             <h2>
               your library<em>.</em>
@@ -234,113 +372,178 @@ export default function Library({ onAdd, onMenuToggle, refreshKey }: LibraryProp
         </div>
 
         <div className="library-search">
-          <SearchBar value={query} onChange={setQuery} busy={searching} />
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            busy={searching}
+            placeholder="search titles, channels, transcripts…"
+          />
         </div>
 
         {inSearchMode ? (
-          <SearchResults
-            query={query.trim()}
-            hits={hits}
-            loading={searching}
-            error={searchErr}
-            truncated={searchTruncated}
-            elapsedMs={searchElapsedMs}
-          />
+          <>
+            {titleMatches.length > 0 && (
+              <section className="title-matches">
+                <header className="title-matches-head">
+                  <span className="title-matches-label">title matches</span>
+                  <span className="title-matches-count">
+                    {titleMatches.length} {titleMatches.length === 1 ? "video" : "videos"}
+                  </span>
+                </header>
+                <div className="row-head row-head-compact">
+                  <div></div>
+                  <div>title</div>
+                  <div>speakers</div>
+                  <div>status</div>
+                  <div>activity</div>
+                  <div></div>
+                </div>
+                {titleMatches.map((v) => (
+                  <VideoRow
+                    key={v.id}
+                    v={v}
+                    onArchiveToggle={handleArchive}
+                    projectsById={projectsById}
+                  />
+                ))}
+              </section>
+            )}
+            <SearchResults
+              query={query.trim()}
+              hits={hits}
+              loading={searching}
+              error={searchErr}
+              truncated={searchTruncated}
+              elapsedMs={searchElapsedMs}
+            />
+          </>
         ) : (
           <>
-
-        <div className="filters">
-          <span className="mono-lbl">filter</span>
-          <span
-            className={`chip ${filter === "all" ? "active" : ""}`}
-            onClick={() => setFilter("all")}
-          >
-            all {projectScoped.length}
-          </span>
-          <span
-            className={`chip ${filter === "diarized" ? "active" : ""}`}
-            onClick={() => setFilter("diarized")}
-          >
-            <SpeakerGlyph /> multi-speaker {projectScoped.filter((v) => v.diarized).length}
-          </span>
-
-          <span className="sort-control">
-            <button
-              type="button"
-              className="sort-button"
-              onClick={() => setSortOpen((v) => !v)}
-              title="Change sort"
-            >
-              sort: {SORT_LABELS[sortKey]} v
-            </button>
-            {sortOpen && (
-              <div className="sort-menu" role="menu">
-                {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`sort-menu-item ${k === sortKey ? "active" : ""}`}
-                    onClick={() => { setSortKey(k); setSortOpen(false); }}
-                    role="menuitem"
-                  >
-                    {SORT_LABELS[k]}
-                  </button>
-                ))}
-              </div>
-            )}
-          </span>
-        </div>
-
-        {projects.length > 0 && (
-          <div className="filters">
-            <span className="mono-lbl">project</span>
-            <span
-              className={`chip ${selectedProjectId === null ? "active" : ""}`}
-              onClick={() => setSelectedProject(null)}
-            >
-              all {items.length}
-            </span>
-            {projects.map((p) => {
-              const count = items.filter((v) => (v.project_ids ?? []).includes(p.id)).length;
-              return (
+            <div className="filters filters-single">
+              <div className="filters-left">
                 <span
-                  key={p.id}
-                  className={`chip ${selectedProjectId === p.id ? "active" : ""}`}
-                  onClick={() => setSelectedProject(p.id)}
-                  title={p.description || p.name}
+                  className={`chip ${filter === "all" ? "active" : ""}`}
+                  onClick={() => setFilter("all")}
                 >
-                  {p.name} {count}
+                  all {projectScoped.length}
                 </span>
-              );
-            })}
-          </div>
-        )}
+                <span
+                  className={`chip ${filter === "diarized" ? "active" : ""}`}
+                  onClick={() => setFilter("diarized")}
+                >
+                  <SpeakerGlyph /> multi-speaker {projectScoped.filter((v) => v.diarized).length}
+                </span>
 
-        <div className="row-head">
-          <div></div>
-          <div>title</div>
-          <div>speakers</div>
-          <div>status</div>
-          <div>activity</div>
-          <div></div>
-        </div>
+                {projects.length > 0 && (
+                  <div className="filter-pill-wrap">
+                    <button
+                      type="button"
+                      className={`filter-pill-trigger ${selectedProject ? "is-active" : ""}`}
+                      onClick={() => setProjectMenuOpen((v) => !v)}
+                      title="Filter by project"
+                    >
+                      <FolderGlyph />
+                      <span>
+                        {selectedProject ? selectedProject.name : "all projects"}
+                      </span>
+                      <span className="filter-pill-count">
+                        {selectedProject
+                          ? items.filter((v) => (v.project_ids ?? []).includes(selectedProject.id)).length
+                          : items.length}
+                      </span>
+                      <ChevronIcon />
+                    </button>
+                    {projectMenuOpen && (
+                      <div className="filter-pill-menu" role="menu">
+                        <button
+                          type="button"
+                          className={`filter-pill-item ${!selectedProject ? "active" : ""}`}
+                          onClick={() => {
+                            setSelectedProject(null);
+                            setProjectMenuOpen(false);
+                          }}
+                          role="menuitem"
+                        >
+                          <span>all projects</span>
+                          <span className="filter-pill-item-count">{items.length}</span>
+                        </button>
+                        {projects.map((p) => {
+                          const count = items.filter((v) => (v.project_ids ?? []).includes(p.id)).length;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className={`filter-pill-item ${selectedProjectId === p.id ? "active" : ""}`}
+                              onClick={() => {
+                                setSelectedProject(p.id);
+                                setProjectMenuOpen(false);
+                              }}
+                              role="menuitem"
+                              title={p.description || p.name}
+                            >
+                              <span>{p.name}</span>
+                              <span className="filter-pill-item-count">{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
-        {visible.length === 0 ? (
-          <div className="library-empty">
-            {selectedProjectId
-              ? "no videos match this project filter yet."
-              : <>no videos yet. click <span className="accent">add video</span> to get started.</>}
-          </div>
-        ) : (
-          visible.map((v) => (
-            <VideoRow
-              key={v.id}
-              v={v}
-              onArchiveToggle={handleArchive}
-              projectsById={projectsById}
-            />
-          ))
-        )}
+              <span className="sort-control">
+                <button
+                  type="button"
+                  className="sort-button"
+                  onClick={() => setSortOpen((v) => !v)}
+                  title="Change sort"
+                >
+                  sort: {SORT_LABELS[sortKey]} <ChevronIcon />
+                </button>
+                {sortOpen && (
+                  <div className="sort-menu" role="menu">
+                    {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className={`sort-menu-item ${k === sortKey ? "active" : ""}`}
+                        onClick={() => { setSortKey(k); setSortOpen(false); }}
+                        role="menuitem"
+                      >
+                        {SORT_LABELS[k]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </span>
+            </div>
+
+            <div className="row-head">
+              <div></div>
+              <div>title</div>
+              <div>speakers</div>
+              <div>status</div>
+              <div>activity</div>
+              <div></div>
+            </div>
+
+            {visible.length === 0 ? (
+              <div className="library-empty">
+                {selectedProjectId
+                  ? "no videos match this project filter yet."
+                  : <>no videos yet. click <span className="accent">add video</span> to get started.</>}
+              </div>
+            ) : (
+              visible.map((v) => (
+                <VideoRow
+                  key={v.id}
+                  v={v}
+                  onArchiveToggle={handleArchive}
+                  projectsById={projectsById}
+                />
+              ))
+            )}
           </>
         )}
       </div>
@@ -363,6 +566,27 @@ function SpeakerGlyph() {
     </svg>
   );
 }
+function FolderGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  );
+}
+function ChevronIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+function ArrowIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
 function HamburgerIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -370,4 +594,3 @@ function HamburgerIcon() {
     </svg>
   );
 }
-
