@@ -318,6 +318,13 @@ def stream_graph_build(
     usage = {"tokens_in": 0, "tokens_out": 0, "cached_tokens": 0, "cost_usd": 0.0}
     last_text = ""
     err_msg: str | None = None
+    # Claude emits a `system/init` event for the orchestrator AND every
+    # Task-dispatched subagent (one per ~22 files for graphify's semantic
+    # extraction pass). The first one is the user's "we're starting"
+    # signal; the rest are subagent boots that show up redundantly with
+    # the Task tool_use lines we already surface. Squelch duplicates by
+    # tracking whether we've yielded the init label already.
+    saw_init = False
 
     assert proc.stdout is not None
     try:
@@ -335,8 +342,13 @@ def stream_graph_build(
                 continue
             etype = evt.get("type")
             if etype == "system":
-                # Initial init message; surface a friendly stage label.
-                yield {"type": "stage", "stage": "Claude session started"}
+                subtype = evt.get("subtype")
+                if subtype == "init" and not saw_init:
+                    saw_init = True
+                    yield {"type": "stage", "stage": "Claude session started"}
+                # Subsequent system events (subagent inits, compaction
+                # notices, etc.) intentionally drop -- the Task tool_use
+                # path below covers subagent dispatch with a real label.
             elif etype == "assistant":
                 msg = evt.get("message") or {}
                 for block in msg.get("content") or []:
