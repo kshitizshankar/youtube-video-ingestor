@@ -38,10 +38,13 @@ _SUMMARY_COLS = [
     # thumbnail for podcasts. show_name / show_url stay off the summary
     # to keep the cards row tight -- they surface in the full transcript.
     "source", "image_url",
+    # Folder-per-project (migration 004): every video has exactly one
+    # project_id (Inbox if the user didn't pick one).
+    "project_id",
 ]
 
 
-def _summary_from_row(conn, row, *, project_ids: list[str] | None = None) -> dict:
+def _summary_from_row(conn, row) -> dict:
     out = {k: row[k] for k in _SUMMARY_COLS}
     out["archived"] = bool(out["archived"])
     out["diarized"] = bool(out["diarized"])
@@ -51,24 +54,9 @@ def _summary_from_row(conn, row, *, project_ids: list[str] | None = None) -> dic
             (row["id"],),
         )
     ]
-    out["project_ids"] = project_ids if project_ids is not None else []
-    return out
-
-
-def _bulk_project_ids(conn, video_ids: list[str]) -> dict[str, list[str]]:
-    """One round-trip lookup of project memberships for a batch of videos."""
-    if not video_ids:
-        return {}
-    placeholders = ",".join("?" * len(video_ids))
-    rows = conn.execute(
-        f"SELECT video_id, project_id FROM project_videos "
-        f"WHERE video_id IN ({placeholders}) "
-        f"ORDER BY video_id, project_id",
-        video_ids,
-    ).fetchall()
-    out: dict[str, list[str]] = {}
-    for r in rows:
-        out.setdefault(r["video_id"], []).append(r["project_id"])
+    # Frontend still expects project_ids[] for backwards compat with the
+    # m:m era. Single-element list now (or empty for an unmigrated row).
+    out["project_ids"] = [out["project_id"]] if out.get("project_id") else []
     return out
 
 
@@ -77,11 +65,7 @@ def _list_by_archived(conn, archived: int) -> list[dict]:
         "SELECT * FROM videos WHERE archived=? ORDER BY created_at DESC",
         (archived,),
     ).fetchall()
-    pid_map = _bulk_project_ids(conn, [r["id"] for r in rows])
-    return [
-        _summary_from_row(conn, r, project_ids=pid_map.get(r["id"], []))
-        for r in rows
-    ]
+    return [_summary_from_row(conn, r) for r in rows]
 
 
 def list_transcripts(out_dir: Path, conn=None) -> list[dict]:
@@ -140,12 +124,20 @@ def set_archived(out_dir: Path, video_id: str, archived: bool, conn=None) -> boo
 def delete_video(out_dir: Path, video_id: str, conn=None) -> bool:
     c, owned = _ensure_conn(conn, out_dir)
     try:
+        # Capture the on-disk path BEFORE deleting the row. After delete,
+        # video_dir() falls back to the flat layout because there's no
+        # row to read videos.path from, which would point at the wrong
+        # folder for post-migration installs.
+        vd = video_dir(out_dir, video_id)
         cur = c.execute("DELETE FROM videos WHERE id=?", (video_id,))
         if cur.rowcount == 0:
             return False
     finally:
         _close_if_owned(c, owned)
-    vd = video_dir(out_dir, video_id)
+    # Bust the cache so a future call doesn't hand back a path to a
+    # folder that's about to vanish.
+    from .layout import forget_video_path
+    forget_video_path(video_id)
     if vd.exists():
         shutil.rmtree(vd, ignore_errors=False)
     return True

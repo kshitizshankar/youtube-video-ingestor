@@ -1,25 +1,117 @@
-"""Per-video folder layout: each video lives in `output/<video_id>/` with a
-canonical file naming scheme.
+"""Per-video folder layout: every video lives under
+`output/projects/<project_id>/<video_id>/` after migration 004 (the
+folder-per-project layout). Pre-migration installations had a flat
+`output/<video_id>/` layout; the helpers here transparently handle
+both via a DB lookup with a flat-fallback for unmigrated rows.
 
-Layout:
-    output/
-        <video_id>/
-            transcript.json   — segments + metadata (authoritative)
-            transcript.txt    — plain text
-            transcript.srt    — subtitles
-            audio.mp3         — original audio
-            CLAUDE.md         — per-video Claude Code project guidance
+Canonical per-video file names (unchanged across the migration):
+    transcript.json   -- segments + metadata (authoritative)
+    transcript.txt    -- plain text
+    transcript.srt    -- subtitles
+    audio.mp3         -- original audio
+    CLAUDE.md         -- per-video Claude Code project guidance
+
+Read paths go through `video_dir(out_dir, video_id)`, which reads
+`videos.path` from the DB with an in-process LRU cache. New ingests
+that don't have a DB row yet use `new_video_dir(out_dir, project_id,
+video_id)` to compute the target path explicitly.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 
+PROJECTS_SUBDIR = "projects"
+INBOX_PROJECT_ID = "inbox"
+
+
+# In-process cache for (out_dir, video_id) -> Path resolutions. Hit rate
+# is very high for the audio-streaming endpoint (one video opened, a
+# thousand range requests against /api/transcripts/<id>/audio). Keyed on
+# both the data root and the video id so a per-test tmp_path doesn't
+# alias a previous test's resolution. Invalidated on moves via
+# `forget_video_path()`.
+_path_cache: dict[tuple[str, str], Path] = {}
+_path_cache_lock = threading.Lock()
+
+
+def _cache_key(out_dir: Path, video_id: str) -> tuple[str, str]:
+    return (str(out_dir), video_id)
+
+
+def project_dir(out_dir: Path, project_id: str) -> Path:
+    """The on-disk folder for a project. All of a project's videos live
+    inside it, plus a `graphify-out/` subfolder once the user builds a
+    knowledge graph for that project."""
+    return out_dir / PROJECTS_SUBDIR / project_id
+
+
+def new_video_dir(out_dir: Path, project_id: str, video_id: str) -> Path:
+    """Compute the folder a NEW video will live in. Used at ingest time
+    before the videos row exists, since `video_dir()` would fail to
+    resolve a path for a video that hasn't been persisted yet."""
+    return project_dir(out_dir, project_id) / video_id
+
+
 def video_dir(out_dir: Path, video_id: str) -> Path:
-    return out_dir / video_id
+    """Folder for an existing video. Reads `videos.path` from the DB
+    (cached). Falls back to the legacy flat layout (`out_dir / video_id`)
+    for any row that doesn't yet have `path` populated -- so a server
+    boot that predates the folder migration still works."""
+    key = _cache_key(out_dir, video_id)
+    with _path_cache_lock:
+        cached = _path_cache.get(key)
+        if cached is not None:
+            return cached
+
+    # Local import so the layout module doesn't pull in DB deps at
+    # import time (keeps tests that mock the layout cheap).
+    from .db import open_connection
+
+    db_path = out_dir / "app.db"
+    if not db_path.exists():
+        # No DB at all -- pre-init or a bare test fixture. Use the
+        # legacy flat layout so callers that just want a path get one.
+        return out_dir / video_id
+
+    conn = open_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT path FROM videos WHERE id=?", (video_id,)
+        ).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+
+    if row and row["path"]:
+        path = Path(row["path"])
+    else:
+        # Pre-migration row OR an unknown id (caller will discover the
+        # folder doesn't exist via .exists() and surface the error).
+        path = out_dir / video_id
+
+    with _path_cache_lock:
+        _path_cache[key] = path
+    return path
+
+
+def forget_video_path(video_id: str | None = None) -> None:
+    """Drop cached path entries for `video_id` across every out_dir
+    (the cache is keyed on (out_dir, video_id) but invalidations come
+    from move flows that don't necessarily know the out_dir). When
+    `video_id` is None, clears the entire cache."""
+    with _path_cache_lock:
+        if video_id is None:
+            _path_cache.clear()
+            return
+        for key in list(_path_cache.keys()):
+            if key[1] == video_id:
+                _path_cache.pop(key, None)
 
 
 def transcript_json(out_dir: Path, video_id: str) -> Path:
@@ -40,16 +132,11 @@ def audio_path(out_dir: Path, video_id: str) -> Path:
 
 # Extensions that yt-dlp's FFmpegExtractAudio post-processor (or a direct
 # audio-URL ingest before postprocessing) might drop into the per-video
-# folder. Order is preferred-first: mp3 is the post-processed canonical
-# output; the others appear when the post-processor was skipped or when
-# we were handed a non-mp3 source.
+# folder. Order is preferred-first.
 _AUDIO_EXTS: tuple[str, ...] = (".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".webm")
 
 
 def find_audio_file(out_dir: Path, video_id: str) -> Path | None:
-    """Return the first existing `audio.<ext>` in the per-video folder, or
-    None if no audio sidecar is present. Used by the audio-streaming
-    endpoint, which must serve whichever extension yt-dlp actually wrote."""
     folder = video_dir(out_dir, video_id)
     if not folder.exists():
         return None
@@ -57,7 +144,6 @@ def find_audio_file(out_dir: Path, video_id: str) -> Path | None:
         p = folder / f"audio{ext}"
         if p.exists():
             return p
-    # Last-ditch: anything starting with "audio." (covers exotic codecs).
     try:
         for entry in folder.iterdir():
             if entry.is_file() and entry.name.startswith("audio."):
@@ -69,6 +155,21 @@ def find_audio_file(out_dir: Path, video_id: str) -> Path | None:
 
 def claude_md(out_dir: Path, video_id: str) -> Path:
     return video_dir(out_dir, video_id) / "CLAUDE.md"
+
+
+def iter_video_dirs(out_dir: Path):
+    """Yield every video folder on disk under the new layout. Used by
+    full-text search and any maintenance that needs to walk the corpus.
+    Layout: `out_dir / projects / <project_id> / <video_id> /`."""
+    projects_root = out_dir / PROJECTS_SUBDIR
+    if not projects_root.is_dir():
+        return
+    for proj in projects_root.iterdir():
+        if not proj.is_dir():
+            continue
+        for vid in proj.iterdir():
+            if vid.is_dir():
+                yield vid
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +221,7 @@ context: `transcript.json` (also available as `transcript.txt` and
    ```
 
 3. **Cite every claim** with a timestamp:
-   `[<HH:MM:SS>]` — read `start` (seconds) and format as HH:MM:SS.
+   `[<HH:MM:SS>]` -- read `start` (seconds) and format as HH:MM:SS.
    With diarization: `SPEAKER_01 [00:14:22]: "..."`.
 
 4. **Quote sparingly.** Direct quotes when they carry the answer; paraphrase
@@ -142,13 +243,15 @@ out to a global session.
 
 
 # ---------------------------------------------------------------------------
-# One-time migration of flat-file outputs to per-video folders
+# Legacy: flat-file -> per-video-folder migration (pre-folder-per-project)
 # ---------------------------------------------------------------------------
 
 
 def migrate_flat_outputs(out_dir: Path) -> dict[str, int]:
     """Move legacy `output/<id>.{json,txt,srt,mp3}` files into
     `output/<id>/{transcript.*, audio.mp3, CLAUDE.md}`. Idempotent.
+    Predates the folder-per-project migration; kept for installations
+    that haven't yet run either migration. New ingests don't need this.
 
     Returns counts: {migrated, already, skipped}.
     """
@@ -159,7 +262,6 @@ def migrate_flat_outputs(out_dir: Path) -> dict[str, int]:
     for json_file in list(out_dir.glob("*.json")):
         if not json_file.is_file():
             continue
-        # Skip variant / debug files like `<id>.distil.txt` (have multi-dot stems)
         stem = json_file.stem
         if "." in stem:
             counts["skipped"] += 1
@@ -181,7 +283,6 @@ def migrate_flat_outputs(out_dir: Path) -> dict[str, int]:
             if src.exists() and not dst.exists():
                 src.rename(dst)
 
-        # Best-effort per-video CLAUDE.md
         try:
             meta = json.loads((target / "transcript.json").read_text(encoding="utf-8"))
             (target / "CLAUDE.md").write_text(render_video_claude_md(meta), encoding="utf-8")

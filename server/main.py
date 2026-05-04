@@ -445,12 +445,17 @@ def api_search(q: str = Query("", min_length=0), limit: int = Query(60, ge=1, le
     if not OUTPUT_DIR.exists():
         return {"query": q, "results": [], "truncated": False}
 
-    # Scan each video folder, skip archived.
-    for sub in sorted(
-        [p for p in OUTPUT_DIR.iterdir() if p.is_dir()],
+    # Walk each video folder under output/projects/<project>/<video>/,
+    # skip archived. iter_video_dirs handles the post-migration layout;
+    # any flat output/<id>/ leftovers from a partial / unmigrated install
+    # are intentionally NOT scanned -- they're orphans.
+    from .layout import iter_video_dirs
+    folders = sorted(
+        iter_video_dirs(OUTPUT_DIR),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
-    ):
+    )
+    for sub in folders:
         jp = sub / "transcript.json"
         if not jp.exists():
             continue

@@ -15,12 +15,14 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
 
 
 def test_empty_stats(client) -> None:
+    """An empty install has the system Inbox project (project_count=1) and
+    no videos."""
     r = client.get("/api/stats")
     assert r.status_code == 200
     d = r.json()
     assert d == {
         "video_count": 0,
-        "project_count": 0,
+        "project_count": 1,
         "total_seconds": 0.0,
         "storage_bytes": 0,
         "latest_videos": [],
@@ -87,7 +89,8 @@ def test_populated_stats(client, tmp_path) -> None:
 
     d = client.get("/api/stats").json()
     assert d["video_count"] == 3
-    assert d["project_count"] == 1
+    # 1 user project + system Inbox project.
+    assert d["project_count"] == 2
     assert d["total_seconds"] == pytest.approx(120.0 + 3600.0 + 240.0)
     assert d["storage_bytes"] == 500 + 900 + 200
     # latest_videos: newest first, archived excluded.

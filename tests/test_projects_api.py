@@ -19,9 +19,15 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
 
 
 def test_empty_projects_list(client) -> None:
+    """A fresh DB has the system Inbox project automatically; no other
+    projects until the user creates one."""
     r = client.get("/api/projects")
     assert r.status_code == 200
-    assert r.json() == []
+    projects = r.json()
+    assert len(projects) == 1
+    assert projects[0]["id"] == "inbox"
+    assert projects[0]["system_kind"] == "inbox"
+    assert projects[0]["video_count"] == 0
 
 
 def test_create_project(client) -> None:

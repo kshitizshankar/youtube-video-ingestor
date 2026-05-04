@@ -50,15 +50,36 @@ def _as_json(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _upsert_video(conn, out_dir: Path, video_id: str, tj: dict, meta: dict, archived: bool) -> bool:
-    """Insert videos row if missing. Returns True if a new row was inserted."""
+def _upsert_video(
+    conn, out_dir: Path, video_id: str, tj: dict, meta: dict,
+    archived: bool, *, folder: Path | None = None,
+) -> bool:
+    """Insert videos row if missing. Returns True if a new row was inserted.
+
+    `folder` lets the caller pass the actual on-disk folder under the new
+    folder-per-project layout. Falls back to the legacy flat path for
+    backwards compat in tests / fresh seeders.
+
+    Derives project_id from the folder location: `output/projects/<X>/<vid>/`
+    gives project_id=X. Anything else falls into Inbox."""
     existing = conn.execute(
         "SELECT id FROM videos WHERE id = ?", (video_id,)
     ).fetchone()
     if existing is not None:
         return False
 
-    folder = out_dir / video_id
+    if folder is None:
+        folder = out_dir / video_id
+    # Derive project_id from the folder path.
+    project_id = "inbox"
+    try:
+        rel = folder.resolve().relative_to((out_dir / "projects").resolve())
+        # rel like "<project_id>/<video_id>"; first part is the project.
+        parts = rel.parts
+        if parts:
+            project_id = parts[0]
+    except (ValueError, OSError):
+        pass
     now = _iso_now()
     conn.execute(
         """
@@ -70,7 +91,8 @@ def _upsert_video(conn, out_dir: Path, video_id: str, tj: dict, meta: dict, arch
             segment_count, model, compute_type, batched, batch_size,
             transcription_elapsed_sec, transcription_realtime_factor,
             storage_bytes, archived, notes, owner, transcribed_at,
-            created_at, updated_at
+            created_at, updated_at,
+            project_id, path
         ) VALUES (
             :id, :url, :title, :channel, :channel_id, :channel_url,
             :channel_follower_count, :upload_date, :duration_sec, :description,
@@ -79,7 +101,8 @@ def _upsert_video(conn, out_dir: Path, video_id: str, tj: dict, meta: dict, arch
             :segment_count, :model, :compute_type, :batched, :batch_size,
             :transcription_elapsed_sec, :transcription_realtime_factor,
             :storage_bytes, :archived, :notes, :owner, :transcribed_at,
-            :created_at, :updated_at
+            :created_at, :updated_at,
+            :project_id, :path
         )
         """,
         {
@@ -116,6 +139,8 @@ def _upsert_video(conn, out_dir: Path, video_id: str, tj: dict, meta: dict, arch
             "transcribed_at": None,
             "created_at": now,
             "updated_at": now,
+            "project_id": project_id,
+            "path": str(folder),
         },
     )
     return True
@@ -269,8 +294,18 @@ def _migrate_ingests(conn, out_dir: Path) -> int:
 
 
 def migrate_data(conn, output_dir: Path) -> dict:
-    """Walk output/ and populate SQLite. Idempotent. Returns counts."""
+    """Walk output/ and populate SQLite. Idempotent. Returns counts.
+
+    Handles both the legacy flat layout (output/<id>/) and the
+    folder-per-project layout (output/projects/<project>/<id>/) introduced
+    in migration 004. The seeder skips rows that already exist in the DB,
+    so on an already-migrated install this is a no-op walk.
+    """
     run_migrations(conn)
+    # Ensure the Inbox project exists so seeded rows have somewhere to
+    # land project-id-wise.
+    from .projects import ensure_inbox
+    ensure_inbox(output_dir, conn=conn)
 
     videos_migrated = 0
     analyses_migrated = 0
@@ -282,11 +317,21 @@ def migrate_data(conn, output_dir: Path) -> dict:
             "ingests_migrated": 0,
         }
 
+    # Walk both layouts. Set semantics ensure no double-seed if a stray
+    # flat folder shadows a properly-nested one.
+    from .layout import iter_video_dirs
+    candidate_dirs: list[Path] = list(iter_video_dirs(output_dir))
+    seen_names = {p.name for p in candidate_dirs}
+    for entry in sorted(output_dir.iterdir()):
+        if not entry.is_dir() or entry.name in seen_names:
+            continue
+        if entry.name in {"projects", "_ingests"}:
+            continue
+        candidate_dirs.append(entry)
+
     conn.execute("BEGIN")
     try:
-        for sub in sorted(output_dir.iterdir()):
-            if not sub.is_dir():
-                continue
+        for sub in sorted(candidate_dirs, key=lambda p: p.name):
             tj_path = sub / "transcript.json"
             if not tj_path.exists():
                 continue
@@ -323,7 +368,7 @@ def migrate_data(conn, output_dir: Path) -> dict:
             archived = bool(tj.get("archived"))
             video_id = tj.get("id") or sub.name
             inserted = _upsert_video(
-                conn, output_dir, video_id, tj, meta, archived
+                conn, output_dir, video_id, tj, meta, archived, folder=sub,
             )
             if inserted:
                 videos_migrated += 1

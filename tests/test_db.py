@@ -43,12 +43,18 @@ def test_run_migrations_creates_tables(tmp_path: Path) -> None:
         )}
         required = {
             "videos", "video_tags", "video_speakers",
-            "projects", "project_videos",
+            "projects",
             "ingests", "analyses",
             "schema_migrations",
+            # Folder-per-project tables (migration 004); migration 005
+            # drops project_videos as part of this layout change.
+            "move_log",
         }
         missing = required - tables
         assert not missing, f"missing tables: {missing}"
+        # project_videos must be GONE -- the m:m table was replaced by
+        # videos.project_id (migration 005).
+        assert "project_videos" not in tables, "project_videos should be dropped"
     finally:
         conn.close()
 

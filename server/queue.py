@@ -162,6 +162,12 @@ def _transcribe_task(
         if state.is_cancel_requested(video_id):
             raise _CancelledMidRun()
         tracked_push("phase", {"phase": "writing", "message": "Writing output files..."})
+        # Folder-per-project: thread project_id directly to write_outputs +
+        # persist so the video lands in its destination on the first try.
+        # No post-hoc move via projects.add_videos -- that would re-shuffle
+        # the freshly-written folder for nothing.
+        if project_id:
+            req.project_id = project_id
         write_outputs(
             out_dir, video_id, info,
             req.model, req.compute_type,
@@ -171,22 +177,9 @@ def _transcribe_task(
             batched=req.batched,
             batch_size=req.batch_size,
             metadata=req.metadata,
+            project_id=req.project_id,
         )
         persist_video_to_db(out_dir, video_id, info, result, req)
-
-        # Attach to the submitting project (if any). The bulk endpoint can't
-        # do this at enqueue time because the videos row doesn't exist yet.
-        if project_id:
-            try:
-                from . import projects as projects_mod
-                added = projects_mod.add_videos(out_dir, project_id, [video_id])
-                if added < 0:
-                    log.warning(
-                        "project %s no longer exists — skipping membership for %s",
-                        project_id, video_id,
-                    )
-            except Exception:
-                log.exception("failed to add %s to project %s", video_id, project_id)
 
         state.update(video_id, phase="done")
         state.finish(video_id)

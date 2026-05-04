@@ -150,10 +150,11 @@ def _iso_now() -> str:
 def _write_result_file(
     out_dir: Path, video_id: str, analysis_id: int, parsed: dict
 ) -> str:
-    """Persist parsed analysis to output/<video>/analyses/<id>.json and
-    swap output/<video>/analysis.json to point at it (symlink with plain-copy
-    fallback for Windows-without-permission). Returns the relative path."""
-    folder = out_dir / video_id
+    """Persist parsed analysis to <video>/analyses/<id>.json and swap
+    <video>/analysis.json to point at it (symlink with plain-copy fallback
+    for Windows-without-permission). Returns the relative path."""
+    from .layout import video_dir
+    folder = video_dir(out_dir, video_id)
     analyses_dir = folder / "analyses"
     analyses_dir.mkdir(exist_ok=True)
     target = analyses_dir / f"{analysis_id}.json"
@@ -201,7 +202,8 @@ def stream_analyze_video(
     """Run analysis for `video_id` using the named provider, yielding
     normalized AnalysisEvent dicts. The outbound events are annotated with
     `analysis_id` so callers can correlate cancel requests."""
-    folder = out_dir / video_id
+    from .layout import video_dir
+    folder = video_dir(out_dir, video_id)
     if not (folder / "transcript.json").exists():
         yield {"type": "error", "error_message": f"no transcript.json in {folder}"}
         return
@@ -394,6 +396,7 @@ def analyze_video(out_dir: Path, video_id: str, **kwargs) -> Path | None:
         ).fetchone()
         if not row or not row["file_path"]:
             return None
-        return out_dir / video_id / row["file_path"]
+        from .layout import video_dir
+        return video_dir(out_dir, video_id) / row["file_path"]
     finally:
         conn.close()

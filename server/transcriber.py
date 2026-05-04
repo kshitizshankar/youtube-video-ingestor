@@ -284,8 +284,16 @@ def write_outputs(
     batched: bool | None = None,
     batch_size: int | None = None,
     metadata: dict | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Path]:
-    vd = video_dir(out_dir, video_id)
+    # Folder-per-project: a fresh ingest goes directly into its target
+    # project's folder rather than the legacy flat output/<id>/. The
+    # project_id is None only for ingest paths that haven't been threaded
+    # through yet -- fall back to Inbox so nothing lands in the legacy
+    # location.
+    from .layout import new_video_dir
+    target_project = project_id or "inbox"
+    vd = new_video_dir(out_dir, target_project, video_id)
     vd.mkdir(parents=True, exist_ok=True)
 
     text_lines = []
@@ -298,10 +306,13 @@ def write_outputs(
             f"{seg['id']}\n{fmt_ts(seg['start'])} --> {fmt_ts(seg['end'])}\n{prefix}{seg['text']}\n"
         )
 
-    txt_p = transcript_txt(out_dir, video_id)
-    srt_p = transcript_srt(out_dir, video_id)
-    json_p = transcript_json(out_dir, video_id)
-    cmd_p = claude_md_for(out_dir, video_id)
+    # Write directly to the target folder paths instead of going through
+    # transcript_*() helpers, which would do another DB lookup that finds
+    # no row yet (write_outputs runs BEFORE persist_video_to_db).
+    txt_p = vd / "transcript.txt"
+    srt_p = vd / "transcript.srt"
+    json_p = vd / "transcript.json"
+    cmd_p = vd / "CLAUDE.md"
 
     txt_p.write_text("\n".join(text_lines), encoding="utf-8")
     srt_p.write_text("\n".join(srt_chunks), encoding="utf-8")
@@ -398,6 +409,10 @@ class TranscribeRequest:
     #     "description":   str | None,
     #   }
     metadata: dict | None = None
+    # Folder-per-project (migration 004): every video lives under
+    # output/projects/<project_id>/<video_id>/. This field is the
+    # destination project for a fresh ingest. None means "use Inbox".
+    project_id: str | None = None
 
 
 def _emit(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, event: str, data: dict) -> None:
@@ -757,6 +772,7 @@ async def stream_transcription(
                 batched=req.batched,
                 batch_size=req.batch_size,
                 metadata=req.metadata,
+                project_id=req.project_id,
             )
             persist_video_to_db(out_dir, video_id, info, result, req)
 
@@ -851,10 +867,25 @@ def persist_video_to_db(
         return
     try:
         run_migrations(conn)
+        # Folder-per-project: every videos row now points at a project via
+        # an FK. Ensure the Inbox project exists before insert so a fresh
+        # ingest with no explicit project doesn't trip the FK.
+        from .projects import ensure_inbox
+        ensure_inbox(out_dir, conn=conn)
+
         now = datetime.now(timezone.utc).isoformat()
         segments = result.get("segments") or []
         meta = req.metadata if isinstance(req.metadata, dict) else None
         is_podcast = bool(meta) and (meta or {}).get("source") == "podcast"
+
+        # project_id is on the request (defaulted by the route handler, or
+        # "inbox" when threading isn't done yet). The path is whatever
+        # new_video_dir computed inside write_outputs; we re-derive it
+        # here so persist is the single writer of the path column (avoids
+        # two paths-of-truth).
+        from .layout import new_video_dir
+        project_id_resolved = (req.project_id or "inbox") if hasattr(req, "project_id") else "inbox"
+        target_dir = new_video_dir(out_dir, project_id_resolved, video_id)
 
         # When metadata is supplied (podcast path), prefer it over yt-dlp's
         # `info` dict -- yt-dlp's generic extractor populates these fields
@@ -913,13 +944,15 @@ def persist_video_to_db(
                 (duration or 0) / result["elapsed_sec"]
                 if result.get("elapsed_sec") else None
             ),
-            "storage_bytes": _folder_bytes(out_dir / video_id),
+            "storage_bytes": _folder_bytes(target_dir),
             "transcribed_at": now,
             "updated_at": now,
             "source": source_val,
             "image_url": image_url,
             "show_name": show_name,
             "show_url": show_url,
+            "project_id": project_id_resolved,
+            "path": str(target_dir),
         }
         conn.execute("""
             INSERT INTO videos(
@@ -931,7 +964,8 @@ def persist_video_to_db(
                 transcription_elapsed_sec, transcription_realtime_factor,
                 storage_bytes, archived, notes, owner, transcribed_at,
                 created_at, updated_at,
-                source, image_url, show_name, show_url
+                source, image_url, show_name, show_url,
+                project_id, path
             ) VALUES (
                 :id, :url, :title, :channel, :channel_id, :channel_url,
                 :channel_follower_count, :upload_date, :duration_sec, :description,
@@ -941,7 +975,8 @@ def persist_video_to_db(
                 :transcription_elapsed_sec, :transcription_realtime_factor,
                 :storage_bytes, 0, NULL, NULL, :transcribed_at,
                 :updated_at, :updated_at,
-                :source, :image_url, :show_name, :show_url
+                :source, :image_url, :show_name, :show_url,
+                :project_id, :path
             )
             ON CONFLICT(id) DO UPDATE SET
                 url=excluded.url,
@@ -975,7 +1010,9 @@ def persist_video_to_db(
                 source=excluded.source,
                 image_url=excluded.image_url,
                 show_name=excluded.show_name,
-                show_url=excluded.show_url
+                show_url=excluded.show_url,
+                project_id=COALESCE(videos.project_id, excluded.project_id),
+                path=COALESCE(videos.path, excluded.path)
         """, row)
     except Exception as e:
         log.warning("persist_video_to_db failed for %s: %s", video_id, e)
