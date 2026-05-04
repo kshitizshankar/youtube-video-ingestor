@@ -503,17 +503,25 @@ master.
   its own corpus; if two projects share a video (which they can't, post
   this change), they'd graph it twice. Fine.
 
-### Open questions
+### Resolved
 
-1. **Slug collisions.** Two projects named "Test" -> two slugs `test`
-   and `test-2`? Or refuse the second create? Suggest: append `-N`
-   suffix automatically.
-2. **graph mode default.** First build is full; "Update" uses
-   `--update`. Should "Rebuild from scratch" be a separate option for
-   when the graph drifts? Suggest: yes, behind a confirm dialog.
-3. **What does "Open graph" do when state='never'?** Disabled, or
-   triggers a build first? Suggest: disabled with tooltip "build the
-   graph first".
+1. **Slug collisions** — auto-suffix the second slug as `-2`, `-3`, ....
+   Refuse only if the suffix space is exhausted (unlikely).
+2. **Build vs Rebuild** — both buttons exposed. "Build graph" is the
+   only option until the graph exists. Once it does, project page
+   shows "Update graph" (runs `--update`) prominently and "Rebuild from
+   scratch" (full re-extraction) behind a confirm dialog labelled
+   "this re-runs semantic extraction and costs more".
+3. **"Open graph" with no graph yet** — button is hidden until
+   `graph_state in {'building','ready','error'}`. There is no link to
+   click while the graph has never been built.
+
+### Trigger surface (locked)
+
+The user is the only thing that triggers a graph build. No background
+debounce, no event-driven rebuild, no auto-trigger on first view. The
+`events_since_build` counter is informational only -- it never causes a
+build.
 
 ---
 
