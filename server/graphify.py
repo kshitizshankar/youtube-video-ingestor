@@ -237,6 +237,14 @@ def get_graph_status(out_dir: Path, project_id: str) -> dict | None:
         if row is None:
             return None
         out_folder = project_dir(out_dir, project_id) / GRAPH_OUT_SUBDIR
+        # graphify writes either `index.html` or `graph.html` depending
+        # on its version. The route handler serves whichever is present
+        # at `/graph/file/`, so the UI just needs to know "is there
+        # something to show."
+        has_viewer = (
+            (out_folder / "index.html").is_file()
+            or (out_folder / "graph.html").is_file()
+        )
         return {
             "state": row["graph_state"],
             "built_at": row["graph_built_at"],
@@ -244,7 +252,9 @@ def get_graph_status(out_dir: Path, project_id: str) -> dict | None:
             "edge_count": row["graph_edge_count"],
             "last_error": row["graph_last_error"],
             "events_since_build": row["events_since_build"] or 0,
-            "has_index_html": (out_folder / "index.html").is_file(),
+            # `has_index_html` kept for backwards compat; semantics now
+            # broaden to "there's a viewer HTML to open."
+            "has_index_html": has_viewer,
             "has_graph_json": (out_folder / "graph.json").is_file(),
         }
     finally:

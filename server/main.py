@@ -760,15 +760,25 @@ async def api_graph_build(
 def api_graph_static(project_id: str, path: str):
     """Static-serve files from `output/projects/<id>/graphify-out/`.
     The leading `file/` segment in the route disambiguates from
-    `/build` and `/status`. The path can be empty, in which case
-    `index.html` is returned."""
+    `/build` and `/status`. When `path` is empty, serve whichever HTML
+    file graphify actually produced -- the project went back and
+    forth on the name (`graph.html` historically, `index.html` in
+    some configurations), so try both rather than hard-coding one."""
     from fastapi.responses import FileResponse
     from .layout import project_dir
     from .graphify import GRAPH_OUT_SUBDIR
     folder = (project_dir(OUTPUT_DIR, project_id) / GRAPH_OUT_SUBDIR).resolve()
     if not folder.is_dir():
         raise HTTPException(status_code=404, detail="graph not built yet")
-    target = (folder / (path or "index.html")).resolve()
+    if not path:
+        # Default landing page: try graphify's known output names in
+        # order of preference. Whichever exists wins.
+        for candidate in ("index.html", "graph.html"):
+            p = folder / candidate
+            if p.is_file():
+                return FileResponse(p)
+        raise HTTPException(status_code=404, detail="no viewer HTML in graphify-out/")
+    target = (folder / path).resolve()
     # Path traversal guard: target MUST live under folder.
     try:
         target.relative_to(folder)
