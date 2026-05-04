@@ -175,9 +175,19 @@ export default function Detail({
         setTitle(t.title || videoId);
         setLanguage(t.language);
         setDuration(t.duration_sec);
-        setSegments(t.segments);
+        // The transcript endpoint merges the DB row with the on-disk
+        // transcript.json. Mid-ingest -- before transcript.json exists
+        // -- the response is the DB row only and has no `segments`
+        // key, so default to [] rather than letting `undefined` leak
+        // into state and crash on the next `segments.length` read.
+        const segs = Array.isArray(t.segments) ? t.segments : [];
+        setSegments(segs);
         setDiarized(t.diarized);
-        setStatus(`${t.segments.length} segments`);
+        setStatus(
+          segs.length > 0
+            ? `${segs.length} segments`
+            : "Waiting for transcript",
+        );
       })
       .catch(() => {
         if (cancelled) return;
