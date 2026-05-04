@@ -82,13 +82,18 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
   const [projectIngests, setProjectIngests] = useState<IngestState[]>([]);
   const [librarySummaries, setLibrarySummaries] = useState<TranscriptSummary[]>([]);
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Mutations funnel through the context so the sidebar/library stay in sync.
   const {
+    projects: allProjects,
     rename: renameProject,
     remove: deleteProjectCtx,
     removeVideo: removeProjectVideo,
     refresh: refreshProjects,
+    moveVideoToProject,
   } = useProjects();
   // Track video IDs we just submitted so we can keep polling even before the
   // server has fully reflected them in the project's video list.
@@ -228,6 +233,51 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
       setDeleteBusy(false);
     }
   }, [projectId, navigate, deleteProjectCtx]);
+
+  // Selection state. Clear whenever we switch projects, since selected
+  // ids belong to the previous project and would silently leak.
+  useEffect(() => { setSelected(new Set()); }, [projectId]);
+
+  const toggleSelect = useCallback((id: string, on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const handleBulkMove = useCallback(async (targetProjectId: string) => {
+    if (selected.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkOpen(false);
+    const ids = Array.from(selected);
+    let ok = 0;
+    const errors: string[] = [];
+    // Sequential: SQLite serialises writes anyway, and a sequential
+    // walk gives us a clean error list keyed to the failing video.
+    for (const vid of ids) {
+      try {
+        await moveVideoToProject(vid, targetProjectId);
+        ok++;
+      } catch (e) {
+        errors.push(`${vid}: ${e}`);
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    reload();
+    refreshProjects();
+    if (errors.length > 0) {
+      alert(
+        `Moved ${ok} of ${ids.length}.\n\nFailed:\n` +
+          errors.slice(0, 5).join("\n") +
+          (errors.length > 5 ? `\n…and ${errors.length - 5} more` : ""),
+      );
+    }
+  }, [selected, bulkBusy, moveVideoToProject, reload, refreshProjects]);
 
   const handleAddSuccess = useCallback(
     (resp: BulkIngestResponse) => {
@@ -414,10 +464,15 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
           </section>
         )}
 
-        <ProjectGraphSection
-          projectId={project.id}
-          refreshKey={videos.length}
-        />
+        {/* Inbox is the staging area; building a graph for "the
+            random pile of stuff I haven't sorted yet" produces a
+            misleading map. Hide the section there. */}
+        {project.system_kind !== "inbox" && (
+          <ProjectGraphSection
+            projectId={project.id}
+            refreshKey={videos.length}
+          />
+        )}
 
         {videos.length > 0 && (
           <div className="project-search">
@@ -454,20 +509,118 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
                 </div>
               );
             }
-            return matches.map((v) => (
-              <div key={v.id} className="project-video-row">
-                <VideoRow v={entryToSummary(v, summaryById.get(v.id))} />
-                <button
-                  type="button"
-                  className="row-action row-action-danger project-row-remove"
-                  title="Remove from project (video itself is not deleted)"
-                  aria-label="Remove from project"
-                  onClick={() => handleRemove(v.id)}
-                >
-                  Remove
-                </button>
-              </div>
-            ));
+            const allOnPageSelected =
+              matches.length > 0 && matches.every((v) => selected.has(v.id));
+            const otherProjects = (allProjects ?? []).filter(
+              (p) => p.id !== project.id,
+            );
+            return (
+              <>
+                <div className="project-bulk-bar">
+                  <label className="project-bulk-checkall" title="Select all visible">
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            for (const v of matches) next.add(v.id);
+                            return next;
+                          });
+                        } else {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            for (const v of matches) next.delete(v.id);
+                            return next;
+                          });
+                        }
+                      }}
+                    />
+                    <span>
+                      {selected.size > 0
+                        ? `${selected.size} selected`
+                        : `select all (${matches.length})`}
+                    </span>
+                  </label>
+                  {selected.size > 0 && (
+                    <div className="project-bulk-actions">
+                      <div className="project-bulk-move">
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => setBulkOpen((v) => !v)}
+                          disabled={bulkBusy}
+                        >
+                          {bulkBusy ? "moving…" : `move ${selected.size} to…`}
+                        </button>
+                        {bulkOpen && (
+                          <div className="project-bulk-menu" role="menu">
+                            {otherProjects.length === 0 && (
+                              <div className="project-bulk-empty">
+                                no other projects to move to.
+                              </div>
+                            )}
+                            {otherProjects.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                className="project-bulk-item"
+                                onClick={() => handleBulkMove(p.id)}
+                                role="menuitem"
+                              >
+                                <span>{p.name}</span>
+                                {p.system_kind === "inbox" && (
+                                  <span className="project-bulk-tag">system</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={clearSelection}
+                        disabled={bulkBusy}
+                      >
+                        clear
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {matches.map((v) => {
+                  const isSelected = selected.has(v.id);
+                  return (
+                    <div
+                      key={v.id}
+                      className={`project-video-row ${isSelected ? "is-selected" : ""}`}
+                    >
+                      <label
+                        className="project-video-check"
+                        title="Select for bulk move"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => toggleSelect(v.id, e.target.checked)}
+                        />
+                      </label>
+                      <VideoRow v={entryToSummary(v, summaryById.get(v.id))} />
+                      <button
+                        type="button"
+                        className="row-action row-action-danger project-row-remove"
+                        title="Remove from project (video itself is not deleted)"
+                        aria-label="Remove from project"
+                        onClick={() => handleRemove(v.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            );
           })()}
         </section>
       </div>

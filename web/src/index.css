@@ -1025,6 +1025,27 @@ html:not(.theme-light) .dp-section {
 .dp-action-muted { color: var(--ok-plum-55); }
 .dp-action-muted:hover { color: var(--ink); border-color: var(--ok-plum); }
 
+/* Dark-mode overrides for the action row (Copy link / YouTube URL /
+   Open / Refresh info / Move / Archive). In dark mode the page
+   background flips to plum, but `--ok-plum-78` is also plum -- the
+   buttons rendered as dark text on dark background and were
+   essentially invisible. Mirror the pattern used elsewhere: bone-on-
+   plum at the same opacities. */
+html:not(.theme-light) .dp-action {
+  color: rgba(243, 236, 220, 0.78);
+  border-color: rgba(243, 236, 220, 0.15);
+}
+html:not(.theme-light) .dp-action:hover {
+  background: rgba(243, 236, 220, 0.06);
+  border-color: rgba(243, 236, 220, 0.6);
+  color: var(--ok-bone);
+}
+html:not(.theme-light) .dp-action-muted { color: rgba(243, 236, 220, 0.55); }
+html:not(.theme-light) .dp-action-muted:hover {
+  color: var(--ok-bone);
+  border-color: rgba(243, 236, 220, 0.6);
+}
+
 .dp-tags {
   display: flex;
   flex-wrap: wrap;
@@ -3456,8 +3477,125 @@ html:not(.theme-light) .project-videos { border-top-color: var(--ok-bone); }
   color: var(--ok-plum-55);
 }
 
-.project-video-row { position: relative; display: block; }
+/* Bulk-select bar above the project's video list. Sticky-ish at the
+   top so when the user has scrolled down a list of 30+ videos and
+   selected ten of them, the "move N to..." action stays reachable. */
+.project-bulk-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--ok-rule);
+  border-bottom: 1px solid var(--ok-rule);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+html:not(.theme-light) .project-bulk-bar {
+  border-color: rgba(243, 236, 220, 0.10);
+}
+.project-bulk-checkall {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.10em;
+  color: var(--ok-plum-78);
+  cursor: pointer;
+}
+html:not(.theme-light) .project-bulk-checkall { color: rgba(243, 236, 220, 0.78); }
+.project-bulk-checkall input { cursor: pointer; }
+.project-bulk-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-bulk-move { position: relative; }
+.project-bulk-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--ok-plum);
+  border-radius: var(--ok-radius-sm);
+  padding: 4px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md);
+}
+.project-bulk-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--ok-font-body);
+  font-size: 12.5px;
+  color: var(--ok-plum-78);
+  background: transparent;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 0;
+  cursor: pointer;
+  gap: 12px;
+}
+.project-bulk-item:hover { background: var(--ok-plum-04); color: var(--ink); }
+.project-bulk-tag {
+  font-family: var(--ok-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ok-plum-55);
+}
+.project-bulk-empty {
+  padding: 10px;
+  font-style: italic;
+  color: var(--ok-plum-55);
+  font-size: 12.5px;
+}
+html:not(.theme-light) .project-bulk-menu {
+  background: var(--ok-plum);
+  border-color: rgba(243, 236, 220, 0.6);
+}
+html:not(.theme-light) .project-bulk-item { color: rgba(243, 236, 220, 0.78); }
+html:not(.theme-light) .project-bulk-item:hover {
+  background: rgba(243, 236, 220, 0.06);
+  color: var(--ok-bone);
+}
+html:not(.theme-light) .project-bulk-tag { color: rgba(243, 236, 220, 0.55); }
+html:not(.theme-light) .project-bulk-empty { color: rgba(243, 236, 220, 0.55); }
+
+/* Each video row gets a checkbox slotted before the link surface.
+   The `.row` Link still owns nav-on-click; the label (with the
+   checkbox inside) sits above it via a higher z-index so a tick
+   doesn't navigate to the video. */
+.project-video-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  align-items: stretch;
+}
 .project-video-row .row { padding-right: 130px; }
+.project-video-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--ok-rule);
+  cursor: pointer;
+  z-index: 2;
+}
+html:not(.theme-light) .project-video-check {
+  border-bottom-color: rgba(243, 236, 220, 0.18);
+}
+.project-video-check input { cursor: pointer; }
+.project-video-row.is-selected { background: var(--ok-tangerine-08); }
+.project-video-row.is-selected .row { background: transparent; }
 .project-row-remove {
   position: absolute;
   right: 18px;
@@ -5489,6 +5627,21 @@ html:not(.theme-light) .ic-title-fetching { color: rgba(243, 236, 220, 0.55); }
   color: var(--ok-plum-55);
   font-size: 12.5px;
 }
+html:not(.theme-light) .dp-move-menu {
+  background: var(--ok-plum);
+  border-color: rgba(243, 236, 220, 0.6);
+}
+html:not(.theme-light) .dp-move-item { color: rgba(243, 236, 220, 0.78); }
+html:not(.theme-light) .dp-move-item:hover {
+  background: rgba(243, 236, 220, 0.06);
+  color: var(--ok-bone);
+}
+html:not(.theme-light) .dp-move-item.active {
+  background: var(--ok-bone);
+  color: var(--ok-plum);
+}
+html:not(.theme-light) .dp-move-tag { color: rgba(243, 236, 220, 0.55); }
+html:not(.theme-light) .dp-move-empty { color: rgba(243, 236, 220, 0.55); }
 
 /* --- Project page: knowledge graph section --------------------- */
 
@@ -5622,6 +5775,21 @@ html:not(.theme-light) .project-graph {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* Dark-mode overrides: every plum-tinted text inside the graph card
+   would otherwise render as dark plum on dark plum. */
+html:not(.theme-light) .project-graph-state em,
+html:not(.theme-light) .project-graph-built,
+html:not(.theme-light) .project-graph-progress-usage {
+  color: rgba(243, 236, 220, 0.55);
+}
+html:not(.theme-light) .project-graph-stats { color: var(--ok-bone); }
+html:not(.theme-light) .project-graph-progress {
+  background: rgba(243, 236, 220, 0.05);
+  border-color: rgba(243, 236, 220, 0.15);
+}
+html:not(.theme-light) .project-graph-stages { color: rgba(243, 236, 220, 0.78); }
+html:not(.theme-light) .project-graph-stages li::before { color: rgba(243, 236, 220, 0.25); }
 
 /* --- "Fix metadata" banner for ID-as-title rows --------------- */
 
