@@ -44,16 +44,71 @@ import psutil
 from .events import AnalysisEvent
 
 
-# Known codex-CLI model slugs (from ~/.codex/models_cache.json on 0.122.0).
-# The CLI also accepts arbitrary slugs via --model; this list drives the UI
-# picker. `gpt-5-codex` from the earlier stub is no longer supported on
-# ChatGPT-authenticated codex, so it is removed.
-_MODELS = [
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
-    "gpt-5.2",
-]
+# How long we keep a `codex debug models` result in memory before
+# re-shelling. Short enough that a `codex` upgrade surfaces new slugs
+# within a minute without a server restart; long enough that rapid
+# modal opens don't pay the ~200ms subprocess cost each time.
+_MODELS_TTL_SEC = 60.0
+
+
+def _list_models_via_cli() -> list[str]:
+    """Shell out to `codex debug models` and return API-supported,
+    user-visible model slugs. Returns [] on any failure; the caller's
+    `available()` gate already ensured the binary exists, so a failure
+    here means a broken / mid-upgrade install -- empty list lets the
+    UI render Codex with no models rather than crash.
+
+    `visibility == "list"` filters out internal helpers (e.g.
+    `codex-auto-review`); `supported_in_api == True` filters out
+    interactive-only variants (e.g. *-spark)."""
+    cli = shutil.which("codex")
+    if not cli:
+        return []
+    try:
+        proc = subprocess.run(
+            [cli, "debug", "models"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0 or not proc.stdout:
+        return []
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return []
+    out: list[str] = []
+    for m in data.get("models") or []:
+        if not isinstance(m, dict):
+            continue
+        if m.get("visibility") != "list":
+            continue
+        if m.get("supported_in_api") is not True:
+            continue
+        slug = m.get("slug")
+        if isinstance(slug, str) and slug:
+            out.append(slug)
+    return out
+
+
+# Process-lifetime cache for the model list. Refreshed every
+# _MODELS_TTL_SEC so a codex upgrade is reflected within a minute.
+_models_cache: tuple[float, list[str]] | None = None
+
+
+def _cached_models() -> list[str]:
+    global _models_cache
+    now = time.monotonic()
+    if _models_cache is not None and (now - _models_cache[0]) < _MODELS_TTL_SEC:
+        return list(_models_cache[1])
+    fresh = _list_models_via_cli()
+    if fresh:
+        _models_cache = (now, fresh)
+    return list(fresh)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +206,7 @@ class CodexCLIProvider:
         return True, None
 
     def list_models(self) -> list[str]:
-        return list(_MODELS)
+        return _cached_models()
 
     def stream_analyze(
         self,
