@@ -336,12 +336,14 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
             >
               <PlusIcon /> add videos
             </button>
-            <button
-              className="btn btn-destructive"
-              onClick={() => setConfirmDelete(true)}
-            >
-              delete project
-            </button>
+            {project.system_kind !== "inbox" && (
+              <button
+                className="btn btn-destructive"
+                onClick={() => setConfirmDelete(true)}
+              >
+                delete project
+              </button>
+            )}
           </>
         }
       />
@@ -363,12 +365,25 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
             <h1
               className="project-title"
               onClick={() => {
+                if (project.system_kind === "inbox") return;
                 setEditingName(true);
                 setNameDraft(project.name);
               }}
-              title="Click to rename"
+              title={
+                project.system_kind === "inbox"
+                  ? "The Inbox is a system project and can't be renamed"
+                  : "Click to rename"
+              }
+              style={
+                project.system_kind === "inbox"
+                  ? { cursor: "default" }
+                  : undefined
+              }
             >
               {project.name}
+              {project.system_kind === "inbox" && (
+                <span className="project-system-badge"> · system</span>
+              )}
             </h1>
           )}
           {project.description && (

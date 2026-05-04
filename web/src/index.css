@@ -5393,6 +5393,103 @@ html:not(.theme-light) .ic-title-fetching { color: rgba(243, 236, 220, 0.55); }
 }
 .project-search .searchbar { max-width: 720px; width: 100%; }
 
+/* --- IngestModal: project picker -------------------------------- */
+
+.ingest-project-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px 0;
+}
+.ingest-project-label {
+  font-family: var(--ok-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ok-plum-55);
+  min-width: 64px;
+}
+.ingest-project-select {
+  flex: 1;
+  font-family: var(--ok-font-body);
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--ok-radius-sm);
+  border: 1px solid var(--ok-plum-15);
+  background: var(--bg);
+  color: var(--ink);
+}
+.ingest-project-select:focus {
+  outline: none;
+  border-color: var(--ok-plum);
+}
+
+/* --- Project page: system badge --------------------------------- */
+
+.project-system-badge {
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ok-plum-55);
+  font-weight: 500;
+  margin-left: 12px;
+  vertical-align: middle;
+}
+
+/* --- VideoDetailsPanel: move-to-project dropdown --------------- */
+
+.dp-move-wrap {
+  position: relative;
+  display: inline-block;
+}
+.dp-move-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--ok-plum);
+  border-radius: var(--ok-radius-sm);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md);
+}
+.dp-move-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  text-align: left;
+  font-family: var(--ok-font-body);
+  font-size: 12.5px;
+  color: var(--ok-plum-78);
+  background: transparent;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 0;
+  cursor: pointer;
+  gap: 12px;
+}
+.dp-move-item:hover { background: var(--ok-plum-04); color: var(--ink); }
+.dp-move-tag {
+  font-family: var(--ok-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ok-plum-55);
+  flex-shrink: 0;
+}
+.dp-move-empty {
+  padding: 10px;
+  font-style: italic;
+  color: var(--ok-plum-55);
+  font-size: 12.5px;
+}
+
 /* --- "Fix metadata" banner for ID-as-title rows --------------- */
 
 .broken-banner {

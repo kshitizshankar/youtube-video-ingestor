@@ -42,7 +42,7 @@ export interface DetailProps {
    */
   pendingIngestUrl?: string | null;
   /** Options chosen in the Ingest modal (model, diarize, batched). */
-  pendingIngestOpts?: { diarize: boolean; model: string; batched: boolean } | null;
+  pendingIngestOpts?: { diarize: boolean; model: string; batched: boolean; projectId?: string } | null;
   /** Cleared by parent once consumed. */
   onPendingIngestConsumed?: () => void;
   /** Called when the ingest completes — parent uses to bump library refreshKey. */
@@ -748,6 +748,10 @@ export default function Detail({
             onMetaChange={setMeta}
             onArchive={transcript ? handleArchive : undefined}
             onMetadataRefreshed={() => {
+              if (videoId) getTranscript(videoId).then(setTranscript).catch(() => {});
+            }}
+            currentProjectId={transcript?.project_id ?? null}
+            onMoved={() => {
               if (videoId) getTranscript(videoId).then(setTranscript).catch(() => {});
             }}
           />

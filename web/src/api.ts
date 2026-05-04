@@ -106,6 +106,9 @@ export interface TranscribeOptions {
    *  fast overall, but segments arrive in bursts. Set to false for a
    *  steadier "live" feel at the cost of 5-10× more wall time. */
   batched?: boolean;
+  /** Destination project for the new video. When omitted, the server
+   *  defaults to the Inbox system project. */
+  projectId?: string;
 }
 
 export function openTranscribeStream(
@@ -116,6 +119,7 @@ export function openTranscribeStream(
   if (opts.diarize) params.set("diarize", "true");
   if (opts.model) params.set("model", opts.model);
   if (opts.batched === false) params.set("batched", "false");
+  if (opts.projectId) params.set("project_id", opts.projectId);
   return new EventSource(withAuthQuery(`/api/transcribe?${params.toString()}`));
 }
 

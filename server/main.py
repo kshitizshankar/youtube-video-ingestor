@@ -1240,12 +1240,17 @@ async def api_transcribe(
     beam_size: int = 5,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
+    project_id: str | None = None,
 ):
+    """Single-video transcription stream. `project_id` controls which
+    project folder the video lands in; defaults to Inbox when omitted."""
+    target_project = project_id or "inbox"
     req = TranscribeRequest(
         url=url, model=model, compute_type=compute_type, device=device,
         language=language, beam_size=beam_size,
         batched=batched, batch_size=batch_size,
         diarize=diarize, min_speakers=min_speakers, max_speakers=max_speakers,
+        project_id=target_project,
     )
     hf_token = os.environ.get("HUGGINGFACE_TOKEN")
     return EventSourceResponse(

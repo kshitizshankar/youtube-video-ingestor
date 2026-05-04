@@ -57,10 +57,12 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const [pendingOpts, setPendingOpts] = useState<{ diarize: boolean; model: string; batched: boolean } | null>(null);
+  const [pendingOpts, setPendingOpts] = useState<
+    { diarize: boolean; model: string; batched: boolean; projectId: string } | null
+  >(null);
 
   const handleIngest = useCallback(
-    (url: string, opts: { diarize: boolean; model: string; batched: boolean }) => {
+    (url: string, opts: { diarize: boolean; model: string; batched: boolean; projectId: string }) => {
       const id = extractVideoId(url);
       setIngestOpen(false);
       if (id) {

@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { extractVideoId } from "../api";
+import { useProjects } from "../ProjectsContext";
 import Tip from "./Tip";
+
+const PROJECT_PREF_KEY = "vvi.ingest.lastProject";
 
 export interface IngestModalProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (url: string, opts: { diarize: boolean; model: string; batched: boolean }) => void;
+  onSubmit: (
+    url: string,
+    opts: { diarize: boolean; model: string; batched: boolean; projectId: string },
+  ) => void;
 }
 
 export default function IngestModal({ open, onClose, onSubmit }: IngestModalProps) {
@@ -13,6 +19,14 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
   const [model, setModel] = useState("distil-large-v3");
   const [live, setLive] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(PROJECT_PREF_KEY) || "inbox";
+    } catch {
+      return "inbox";
+    }
+  });
+  const { projects } = useProjects();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -23,6 +37,26 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
+
+  // Persist the last picked project so the next ingest opens in the
+  // same place. Saves the click for the common "I'm dropping ten URLs
+  // into one project" flow.
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECT_PREF_KEY, projectId);
+    } catch {
+      /* swallow -- private mode etc. */
+    }
+  }, [projectId]);
+
+  // If the persisted project disappeared (deleted in another tab),
+  // fall back to Inbox so the picker isn't pointing at a tombstone.
+  useEffect(() => {
+    if (!projects) return;
+    if (!projects.some((p) => p.id === projectId)) {
+      setProjectId("inbox");
+    }
+  }, [projects, projectId]);
 
   // Clear any stale error as soon as the user starts editing again.
   useEffect(() => { if (err) setErr(null); }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -50,7 +84,7 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
       return;
     }
     // Diarization now runs automatically as a post-step — no UI toggle.
-    onSubmit(trimmed, { diarize: false, model, batched: !live });
+    onSubmit(trimmed, { diarize: false, model, batched: !live, projectId });
   }
 
   return (
@@ -83,6 +117,21 @@ export default function IngestModal({ open, onClose, onSubmit }: IngestModalProp
             {err}
           </div>
         )}
+
+        <label className="ingest-project-row">
+          <span className="ingest-project-label">project</span>
+          <select
+            className="ingest-project-select"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+          >
+            {(projects ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.system_kind === "inbox" ? `${p.name} (default)` : p.name}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div className="ingest-opts">
           <div className="opt-group" role="group" aria-label="Model">

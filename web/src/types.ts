@@ -83,6 +83,8 @@ export interface Transcript {
   /** Canonical show URL — RSS feed URL or Spotify show URL. Null for
    *  YouTube. */
   show_url?: string | null;
+  /** Owning project (folder-per-project). Always set post-migration. */
+  project_id?: string | null;
 }
 
 export type SseEvent =

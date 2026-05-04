@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { patchMeta, refreshMetadata } from "../api";
+import { useProjects } from "../ProjectsContext";
 import type { Segment, VideoMeta } from "../types";
 
 export interface VideoDetailsPanelProps {
@@ -20,11 +21,18 @@ export interface VideoDetailsPanelProps {
   onArchive?: () => void;
   /** Fired when yt-dlp metadata is re-fetched — parent should refetch transcript. */
   onMetadataRefreshed?: () => void;
+  /** Current owning project id (folder-per-project). When set, the action
+   *  row renders a "Move to project" picker. */
+  currentProjectId?: string | null;
+  /** Fired after a successful move so the parent can refetch transcript /
+   *  refresh state. */
+  onMoved?: () => void;
 }
 
 export default function VideoDetailsPanel({
   videoId, source = "youtube", videoUrl, shareUrl, diarized, segments,
   meta, onMetaChange, onArchive, onMetadataRefreshed,
+  currentProjectId, onMoved,
 }: VideoDetailsPanelProps) {
   const detected = useDetectedSpeakers(segments);
   const speakerCount = detected.length;
@@ -37,6 +45,8 @@ export default function VideoDetailsPanel({
         shareUrl={shareUrl}
         onArchive={onArchive}
         onMetadataRefreshed={onMetadataRefreshed}
+        currentProjectId={currentProjectId ?? null}
+        onMoved={onMoved}
       />
       <DetectionRow
         speakerCount={speakerCount}
@@ -109,6 +119,7 @@ function SpeakersGlyph() {
 
 function ActionRow({
   videoId, source, videoUrl, shareUrl, onArchive, onMetadataRefreshed,
+  currentProjectId, onMoved,
 }: {
   videoId: string;
   source: "youtube" | "podcast";
@@ -116,9 +127,46 @@ function ActionRow({
   shareUrl: string;
   onArchive?: () => void;
   onMetadataRefreshed?: () => void;
+  currentProjectId: string | null;
+  onMoved?: () => void;
 }) {
   const [copied, setCopied] = useState<"" | "yt" | "share">("");
   const [refreshing, setRefreshing] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const { projects, projectsById, moveVideoToProject } = useProjects();
+  const currentProject = currentProjectId ? projectsById.get(currentProjectId) : null;
+  const movePickerRef = useRef<HTMLDivElement>(null);
+
+  // Outside click closes the move-picker dropdown.
+  useEffect(() => {
+    if (!moveOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (movePickerRef.current && t && !movePickerRef.current.contains(t)) {
+        setMoveOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moveOpen]);
+
+  const handleMove = useCallback(async (target: string) => {
+    if (!target || target === currentProjectId) {
+      setMoveOpen(false);
+      return;
+    }
+    setMoving(true);
+    setMoveOpen(false);
+    try {
+      await moveVideoToProject(videoId, target);
+      onMoved?.();
+    } catch (e) {
+      alert(`Move failed: ${e}`);
+    } finally {
+      setMoving(false);
+    }
+  }, [videoId, currentProjectId, moveVideoToProject, onMoved]);
 
   // Source-aware labels/icons for the second copy/open buttons. The first
   // button is always "Copy link" (the share URL); the second is the
@@ -202,6 +250,51 @@ function ActionRow({
         >
           <RefreshIcon /> {refreshing ? "Refreshing…" : "Refresh info"}
         </button>
+        {currentProjectId && (
+          <div className="dp-move-wrap" ref={movePickerRef}>
+            <button
+              type="button"
+              className="dp-action dp-action-muted"
+              onClick={() => setMoveOpen((v) => !v)}
+              disabled={moving}
+              title={
+                currentProject
+                  ? `Currently in: ${currentProject.name}`
+                  : "Move to a different project"
+              }
+            >
+              <MoveIcon />{" "}
+              {moving
+                ? "Moving…"
+                : currentProject
+                  ? `Project: ${currentProject.name}`
+                  : "Move to project"}
+            </button>
+            {moveOpen && (
+              <div className="dp-move-menu" role="menu">
+                {(projects ?? [])
+                  .filter((p) => p.id !== currentProjectId)
+                  .map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="dp-move-item"
+                      onClick={() => handleMove(p.id)}
+                      role="menuitem"
+                    >
+                      <span>{p.name}</span>
+                      {p.system_kind === "inbox" && (
+                        <span className="dp-move-tag">system</span>
+                      )}
+                    </button>
+                  ))}
+                {(projects ?? []).filter((p) => p.id !== currentProjectId).length === 0 && (
+                  <div className="dp-move-empty">No other projects yet.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {onArchive && (
           <button
             type="button"
@@ -491,6 +584,17 @@ function RefreshIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M23 4v6h-6M1 20v-6h6" />
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  );
+}
+function MoveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 9l-3 3 3 3" />
+      <path d="M9 5l3-3 3 3" />
+      <path d="M15 19l-3 3-3-3" />
+      <path d="M19 9l3 3-3 3" />
+      <path d="M2 12h20M12 2v20" />
     </svg>
   );
 }
