@@ -211,18 +211,38 @@ export default function Detail({
     return () => { cancelled = true; };
   }, [videoId]);
 
-  // Orphan detection: when no transcript loaded AND no active ingest record,
-  // peek at the folder on disk. If a folder exists but has no transcript,
-  // we're looking at a crashed-mid-ingest state and the user gets a recovery
-  // banner. Re-runs whenever those signals change.
+  // Orphan detection: a video is "stuck" when there's a DB row but no
+  // transcript on disk AND no live worker writing one. Two sub-cases:
+  //   - no transcript loaded at all (404; no DB row, no folder)
+  //   - transcript loaded but has zero segments (DB row only -- folder
+  //     either crashed mid-ingest or was added by hand). My earlier
+  //     defaulting-to-[] fix made the second case render "Waiting for
+  //     transcript" forever; this re-checks folder state for it too.
+  // In either case, if there's no active ingest record, peek at the
+  // folder and surface the retry banner when the on-disk transcript
+  // is missing.
   useEffect(() => {
     if (!videoId) return;
-    if (transcript) { setOrphan(null); return; }
+    const hasSegments = (transcript?.segments?.length ?? 0) > 0;
+    if (hasSegments) { setOrphan(null); return; }
     if (ingestRecord && !ingestRecord.done) { setOrphan(null); return; }
     if (pendingIngestUrl) { setOrphan(null); return; }
     let cancelled = false;
     getVideoFolderStatus(videoId)
-      .then((s) => { if (!cancelled) setOrphan(s.exists && !s.has_transcript ? s : null); })
+      .then((s) => {
+        if (cancelled) return;
+        // Orphan when EITHER:
+        //   - the folder exists but the on-disk transcript is missing, or
+        //   - the folder doesn't exist at all but we have a DB row
+        //     (means: row was inserted but ingest never created the
+        //      per-video folder; a separate failure mode that still
+        //      needs a retry path)
+        const hasDbRow = transcript !== null;
+        const stuck =
+          (s.exists && !s.has_transcript) ||
+          (hasDbRow && !s.exists);
+        setOrphan(stuck ? s : null);
+      })
       .catch(() => { if (!cancelled) setOrphan(null); });
     return () => { cancelled = true; };
   }, [videoId, transcript, ingestRecord, pendingIngestUrl]);
@@ -371,11 +391,17 @@ export default function Detail({
     if (!videoId) return;
     setRetryPending(true);
     try {
-      // Crashed-ingest case: registry was wiped, so ingestRecord?.url is
-      // null. The canonical YouTube URL is derivable from the videoId — let
-      // the server use that instead of erroring.
-      const fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      await retryIngest(videoId, ingestRecord?.url ?? fallbackUrl);
+      // URL resolution priority for a retry, most-trusted first:
+      //   1. The live registry record (still has the original URL).
+      //   2. The persisted DB row's `url` (works for YouTube AND for
+      //      podcast `aud-<sha1>` ids whose canonical YT URL is wrong).
+      //   3. A YouTube guess from the videoId, only as a last resort
+      //      for legacy rows where neither survived.
+      const url =
+        ingestRecord?.url ??
+        transcript?.url ??
+        `https://www.youtube.com/watch?v=${videoId}`;
+      await retryIngest(videoId, url);
       setOrphan(null);
       setBusy(true);
       setStatus("Retry queued");
@@ -385,7 +411,7 @@ export default function Detail({
     } finally {
       setRetryPending(false);
     }
-  }, [videoId, ingestRecord?.url]);
+  }, [videoId, ingestRecord?.url, transcript?.url]);
 
   const handleDiscardOrphan = useCallback(async () => {
     if (!videoId) return;

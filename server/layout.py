@@ -90,14 +90,16 @@ def video_dir(out_dir: Path, video_id: str) -> Path:
 
     if row and row["path"]:
         path = Path(row["path"])
-    else:
-        # Pre-migration row OR an unknown id (caller will discover the
-        # folder doesn't exist via .exists() and surface the error).
-        path = out_dir / video_id
-
-    with _path_cache_lock:
-        _path_cache[key] = path
-    return path
+        with _path_cache_lock:
+            _path_cache[key] = path
+        return path
+    # Pre-migration row OR an unknown id. Return the legacy flat path
+    # so callers that just need a Path get one, but DON'T cache it --
+    # if this is a not-yet-persisted ingest, the row will appear with
+    # the real path once persist_video_to_db runs, and a stale cache
+    # entry would mask it forever (the bug surfaced as "Waiting for
+    # transcript" persisting after a successful ingest).
+    return out_dir / video_id
 
 
 def forget_video_path(video_id: str | None = None) -> None:

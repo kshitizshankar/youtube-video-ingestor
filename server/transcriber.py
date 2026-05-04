@@ -1022,6 +1022,16 @@ def persist_video_to_db(
                 project_id=COALESCE(videos.project_id, excluded.project_id),
                 path=COALESCE(videos.path, excluded.path)
         """, row)
+        # The path layer caches video_id -> Path in-process. If a request
+        # came in for this id BEFORE persist ran (Detail page polling
+        # during transcription), the cache might hold a stale fallback
+        # path. Bust it so the next video_dir() call reads our newly-
+        # written DB path.
+        try:
+            from .layout import forget_video_path
+            forget_video_path(video_id)
+        except Exception:
+            pass
     except Exception as e:
         log.warning("persist_video_to_db failed for %s: %s", video_id, e)
     finally:
