@@ -52,14 +52,16 @@ export default function ProjectGraphSection({
     return () => clearInterval(id);
   }, [building, refresh]);
 
-  const startBuild = useCallback((mode: "update" | "rebuild" | "deep") => {
+  const subscribe = useCallback((mode: "update" | "rebuild" | "deep") => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
     }
-    setStages([]);
-    setUsage(null);
-    setDoneSummary(null);
+    // Don't clobber accumulated stages/usage when we're attaching to a
+    // build that's already in flight (page refresh path) -- the server
+    // replays the ring buffer on subscribe, and we want to show those
+    // events alongside any history we already had. Only reset when
+    // starting a brand new build (called via startBuild).
     setErrMsg(null);
     setBuilding(true);
 
@@ -113,6 +115,25 @@ export default function ProjectGraphSection({
       }
     });
   }, [projectId, refresh]);
+
+  const startBuild = useCallback((mode: "update" | "rebuild" | "deep") => {
+    // A fresh kick: clear any stale UI from a previous build first.
+    setStages([]);
+    setUsage(null);
+    setDoneSummary(null);
+    subscribe(mode);
+  }, [subscribe]);
+
+  // Auto-attach to an in-flight build whenever the page lands in a
+  // "building" state without an active EventSource. This is what makes
+  // a refresh recover cleanly: the new subscriber gets the ring-buffer
+  // replay from the session and continues with live events. Mode is
+  // ignored on the attach side; the in-flight build's mode wins.
+  useEffect(() => {
+    if (status?.state === "building" && !esRef.current && !building) {
+      subscribe("update");
+    }
+  }, [status?.state, building, subscribe]);
 
   useEffect(() => {
     return () => {
