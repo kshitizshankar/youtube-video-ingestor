@@ -22,6 +22,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,23 @@ GRAPH_OUT_SUBDIR = "graphify-out"
 
 class GraphifyError(Exception):
     pass
+
+
+class GraphifyAlreadyRunning(GraphifyError):
+    """Raised when a build is requested for a project that already has
+    one in flight. The route handler maps this to 409."""
+
+
+# Process-lifetime guard: at most one build per project at a time. The
+# value is a tuple of (cancel_event, started_at_monotonic). Stored under
+# a lock because the SSE handler creates threads from the asyncio loop.
+_active_builds: dict[str, tuple[Event, float]] = {}
+_active_builds_lock = threading.Lock()
+
+
+def is_build_active(project_id: str) -> bool:
+    with _active_builds_lock:
+        return project_id in _active_builds
 
 
 # ---------------------------------------------------------------------------
@@ -210,8 +228,10 @@ def stream_graph_build(
 ) -> Iterator[dict]:
     """Run /graphify on the project's folder and yield phase / usage /
     done events. `mode` is 'update' (default, incremental), 'rebuild'
-    (full), or 'deep' (full + --mode deep)."""
-    cancel_event = cancel_event or Event()
+    (full), or 'deep' (full + --mode deep). Refuses (raises
+    GraphifyAlreadyRunning) when another build is already in flight for
+    the same project -- this is what protects against EventSource auto-
+    reconnect spawning a second `claude` subprocess."""
     folder = project_dir(out_dir, project_id)
     if not folder.is_dir():
         yield {"type": "error", "error_message": f"project folder missing: {folder}"}
@@ -222,13 +242,22 @@ def stream_graph_build(
         yield {"type": "error", "error_message": "`claude` CLI not found on PATH"}
         return
 
+    # Concurrent-build guard. Reserve our slot atomically.
+    cancel_event = cancel_event or Event()
+    with _active_builds_lock:
+        if project_id in _active_builds:
+            raise GraphifyAlreadyRunning(
+                f"a graph build is already running for project '{project_id}'"
+            )
+        _active_builds[project_id] = (cancel_event, time.monotonic())
+
     # Build the prompt. graphify's slash command handler reads the path
     # as the first positional after the command, so we pass it inline.
-    flags = ""
-    if mode == "rebuild":
-        flags = ""
-    elif mode == "deep":
+    if mode == "deep":
         flags = " --mode deep"
+    elif mode == "rebuild":
+        # Full re-extract: no flag, graphify defaults to a clean run.
+        flags = ""
     else:  # update (default)
         flags = " --update"
     # graphify is built around an existing path; quote it so paths with
@@ -278,6 +307,11 @@ def stream_graph_build(
     except OSError as e:
         msg = f"failed to launch claude: {e}"
         _set_graph_state(out_dir, project_id, state="error", last_error=msg)
+        # Release the slot so the user can retry; the slot was reserved
+        # before subprocess.Popen, so an early-return without the shared
+        # try/finally below would otherwise leak.
+        with _active_builds_lock:
+            _active_builds.pop(project_id, None)
         yield {"type": "error", "error_message": msg}
         return
 
@@ -398,6 +432,9 @@ def stream_graph_build(
             proc.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
             _kill_tree(proc, grace_sec=1.0)
+        # Always release the per-project slot so a re-run is possible.
+        with _active_builds_lock:
+            _active_builds.pop(project_id, None)
 
 
 def _tool_use_label(name: str, inp: dict) -> str:

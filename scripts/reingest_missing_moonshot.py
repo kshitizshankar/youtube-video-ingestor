@@ -116,19 +116,51 @@ def fetch_rss() -> list[dict]:
 
 
 def find_dangling_ids() -> set[str]:
+    """Locate videos that should be in the moonshot project but have
+    no on-disk transcript.
+
+    Pre-folder-migration this script queried `project_videos` (the m:m
+    join table). After migration 005 dropped that table the m:m schema
+    is gone and a video's home is `videos.project_id`. Dangling now
+    means: project_id matches but the on-disk path no longer has a
+    transcript.json (the original failure mode that motivated this
+    script -- ingest crashed pre-write). Falls back to project_videos
+    on installations that haven't run the folder migration yet."""
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
+    has_pv = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_videos'"
+    ).fetchone())
+    if has_pv:
+        rows = con.execute(
+            """
+            SELECT pv.video_id
+            FROM project_videos pv
+            LEFT JOIN videos v ON v.id = pv.video_id
+            WHERE pv.project_id = ? AND v.id IS NULL
+            """,
+            (PROJECT_ID,),
+        ).fetchall()
+        con.close()
+        return set(r["video_id"] for r in rows)
+    # Post-migration: every video has a row; "dangling" means the on-
+    # disk transcript is missing. Walk every video assigned to the
+    # project and check disk. Caller wants candidates for re-ingest;
+    # videos with present transcripts don't need re-ingest.
     rows = con.execute(
-        """
-        SELECT pv.video_id
-        FROM project_videos pv
-        LEFT JOIN videos v ON v.id = pv.video_id
-        WHERE pv.project_id = ? AND v.id IS NULL
-        """,
+        "SELECT id, path FROM videos WHERE project_id = ? AND archived = 0",
         (PROJECT_ID,),
     ).fetchall()
     con.close()
-    return set(r["video_id"] for r in rows)
+    out: set[str] = set()
+    for r in rows:
+        p = r["path"]
+        if not p:
+            out.add(r["id"])
+            continue
+        if not (Path(p) / "transcript.json").is_file():
+            out.add(r["id"])
+    return out
 
 
 def post_reingest(payload: dict) -> dict:

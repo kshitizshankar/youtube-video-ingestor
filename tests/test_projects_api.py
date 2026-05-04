@@ -62,11 +62,22 @@ def test_rename_and_delete(client) -> None:
 
 def test_add_and_remove_video(client, tmp_path) -> None:
     from server.db import open_connection, run_migrations
+    from server.projects import ensure_inbox
     conn = open_connection(tmp_path / "app.db")
     run_migrations(conn)
+    ensure_inbox(tmp_path, conn=conn)
+    # Folder-per-project: every video must have a project_id + path.
+    # The "add to a project" flow uses the move protocol, which refuses
+    # NULL-path rows. Seed the video into Inbox with a path that doesn't
+    # exist on disk -- move_video skips the FS step in that case and
+    # just records the DB swap.
+    inbox_path = tmp_path / "projects" / "inbox" / "abc12345678"
+    inbox_path.mkdir(parents=True, exist_ok=True)
     conn.execute(
-        "INSERT INTO videos(id,url,title,created_at,updated_at) VALUES(?,?,?,?,?)",
-        ("abc12345678", "https://x", "Vid", "2026-01-01", "2026-01-01"),
+        "INSERT INTO videos(id,url,title,created_at,updated_at,project_id,path) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("abc12345678", "https://x", "Vid", "2026-01-01", "2026-01-01",
+         "inbox", str(inbox_path)),
     )
     conn.close()
 

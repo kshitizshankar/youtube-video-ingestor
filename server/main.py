@@ -703,11 +703,18 @@ async def api_graph_build(
     mode: str = "update",
 ):
     """Kick a graphify run for the project. Query: ?mode=update|rebuild|deep.
-    Returns SSE stream of phase / usage / done / error events. GET (not
-    POST) so the browser's EventSource can subscribe directly."""
+    Returns SSE stream of phase / usage / done / error events. Uses GET
+    so the browser's EventSource can subscribe directly. Concurrent
+    builds for the same project are refused with 409; the per-project
+    guard inside `stream_graph_build` ensures an EventSource auto-
+    reconnect doesn't spawn a second claude subprocess."""
     import asyncio
     import json as _json
-    from .graphify import stream_graph_build
+    from .graphify import (
+        GraphifyAlreadyRunning,
+        is_build_active,
+        stream_graph_build,
+    )
 
     mode = (mode or "update").lower()
     if mode not in ("update", "rebuild", "deep"):
@@ -719,6 +726,17 @@ async def api_graph_build(
     if proj is None:
         raise HTTPException(status_code=404, detail="project not found")
 
+    # Pre-check the concurrent-build guard so the route returns a clean
+    # 409 (which the browser EventSource cannot auto-retry on) instead
+    # of streaming an error event from inside the SSE response. The
+    # generator below also re-checks atomically; this is just for a
+    # cleaner UX on the rejection path.
+    if is_build_active(project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"a graph build is already running for '{project_id}'",
+        )
+
     async def event_gen():
         loop = asyncio.get_running_loop()
         q: asyncio.Queue = asyncio.Queue()
@@ -728,6 +746,13 @@ async def api_graph_build(
             try:
                 for evt in stream_graph_build(OUTPUT_DIR, project_id, mode=mode):
                     loop.call_soon_threadsafe(q.put_nowait, evt)
+            except GraphifyAlreadyRunning as e:
+                # Lost the race against another concurrent request.
+                # Surface as an error event so the EventSource closes
+                # without retrying.
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "type": "error", "error_message": str(e),
+                })
             finally:
                 loop.call_soon_threadsafe(q.put_nowait, SENTINEL)
 

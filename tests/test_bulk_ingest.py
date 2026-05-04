@@ -51,11 +51,20 @@ def test_dedup_skips_already_transcribed(client, tmp_path):
 
 def test_dedup_adds_to_project(client, tmp_path):
     from server.db import open_connection, run_migrations
+    from server.projects import ensure_inbox
     c = open_connection(tmp_path / "app.db")
     run_migrations(c)
+    ensure_inbox(tmp_path, conn=c)
+    # Seed an already-transcribed video in Inbox with a populated path
+    # so the move-to-project step (now triggered by the dedup branch)
+    # has somewhere to migrate from.
+    inbox_path = tmp_path / "projects" / "inbox" / "aaaa1111aaa"
+    inbox_path.mkdir(parents=True, exist_ok=True)
     c.execute(
-        "INSERT INTO videos(id, url, title, created_at, updated_at) VALUES(?,?,?,?,?)",
-        ("aaaa1111aaa", "https://x", "V", "2026-01-01", "2026-01-01"),
+        "INSERT INTO videos(id, url, title, created_at, updated_at, project_id, path) "
+        "VALUES(?,?,?,?,?,?,?)",
+        ("aaaa1111aaa", "https://x", "V", "2026-01-01", "2026-01-01",
+         "inbox", str(inbox_path)),
     )
     c.execute(
         "INSERT INTO projects(id, name, created_at, updated_at) VALUES(?,?,?,?)",
