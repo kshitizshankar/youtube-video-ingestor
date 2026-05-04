@@ -954,6 +954,14 @@ def persist_video_to_db(
             "project_id": project_id_resolved,
             "path": str(target_dir),
         }
+        # Bump the project's graph-staleness counter so the UI shows
+        # "N events since last build". A successful graph build resets
+        # it to 0.
+        try:
+            from .graphify import bump_events_since_build
+            bump_events_since_build(out_dir, project_id_resolved)
+        except Exception:
+            log.debug("bump_events_since_build failed", exc_info=True)
         conn.execute("""
             INSERT INTO videos(
                 id, url, title, channel, channel_id, channel_url,

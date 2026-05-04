@@ -5490,6 +5490,139 @@ html:not(.theme-light) .ic-title-fetching { color: rgba(243, 236, 220, 0.55); }
   font-size: 12.5px;
 }
 
+/* --- Project page: knowledge graph section --------------------- */
+
+.project-graph {
+  margin: 24px 0;
+  padding: 18px 22px;
+  border: 1px solid var(--ok-rule);
+  border-radius: var(--ok-radius-sm);
+  background: var(--ok-plum-04);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+html:not(.theme-light) .project-graph {
+  background: rgba(243, 236, 220, 0.04);
+  border-color: rgba(243, 236, 220, 0.10);
+}
+.project-graph-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.project-graph-kicker {
+  font-family: var(--ok-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ok-tangerine);
+  font-weight: 700;
+}
+.project-graph-state {
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ok-plum-78);
+}
+.project-graph-state.state-ready { color: var(--ok-moss); }
+.project-graph-state.state-building { color: var(--ok-tangerine); }
+.project-graph-state.state-error { color: var(--ok-tangerine); }
+.project-graph-state em {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--ok-plum-55);
+}
+
+.project-graph-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.project-graph-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  font-family: var(--ok-font-body);
+  font-size: 13px;
+  color: var(--ink);
+}
+.project-graph-stats strong {
+  font-family: var(--ok-font-display);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  margin-right: 4px;
+}
+.project-graph-built {
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+  color: var(--ok-plum-55);
+  margin-left: auto;
+}
+
+.project-graph-progress {
+  background: var(--bg);
+  border: 1px solid var(--ok-plum-15);
+  border-radius: var(--ok-radius-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--ok-font-mono);
+  font-size: 11px;
+}
+.project-graph-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.project-graph-progress-label {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ok-tangerine);
+  font-weight: 700;
+}
+.project-graph-progress-usage {
+  color: var(--ok-plum-55);
+}
+.project-graph-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ok-plum-78);
+  font-family: var(--ok-font-body);
+  font-size: 12px;
+}
+.project-graph-stages li::before {
+  content: "→ ";
+  color: var(--ok-plum-25);
+}
+.project-graph-done {
+  font-family: var(--ok-font-mono);
+  color: var(--ok-moss);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.project-graph-error {
+  font-family: var(--ok-font-mono);
+  font-size: 11.5px;
+  color: var(--ok-tangerine);
+  background: var(--ok-tangerine-08);
+  padding: 6px 10px;
+  border-radius: var(--ok-radius-sm);
+}
+
+.project-graph-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* --- "Fix metadata" banner for ID-as-title rows --------------- */
 
 .broken-banner {

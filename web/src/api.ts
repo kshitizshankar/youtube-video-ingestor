@@ -220,6 +220,45 @@ export interface MoveVideoResult {
   to_path: string;
 }
 
+export interface ProjectGraphStatus {
+  state: "never" | "building" | "ready" | "error";
+  built_at: string | null;
+  node_count: number | null;
+  edge_count: number | null;
+  last_error: string | null;
+  events_since_build: number;
+  has_index_html: boolean;
+  has_graph_json: boolean;
+}
+
+export async function getProjectGraphStatus(
+  projectId: string,
+): Promise<ProjectGraphStatus> {
+  const r = await authFetch(`/api/projects/${projectId}/graph/status`);
+  if (!r.ok) throw new Error(`graph status failed: ${r.status}`);
+  return r.json();
+}
+
+/** Open an SSE stream that simultaneously triggers and streams the
+ *  graph build. Mode: 'update' (default, incremental), 'rebuild' (full
+ *  re-extract), or 'deep' (richer edges). Subscribing IS the trigger --
+ *  same single-door pattern as the analysis endpoint. */
+export function openGraphBuildStream(
+  projectId: string,
+  mode: "update" | "rebuild" | "deep" = "update",
+): EventSource {
+  return new EventSource(
+    withAuthQuery(`/api/projects/${projectId}/graph/build?mode=${encodeURIComponent(mode)}`),
+  );
+}
+
+/** Path-on-server helper for the graph viewer link. The browser needs
+ *  the auth token in the query string because the user opens this in a
+ *  new tab. */
+export function projectGraphIndexUrl(projectId: string): string {
+  return withAuthQuery(`/api/projects/${projectId}/graph/file/`);
+}
+
 /** Move a video into a different project. Server uses an atomic
  *  rename when source and destination are on the same drive, falling
  *  back to copy-verify-delete otherwise. Refuses (409) when an ingest

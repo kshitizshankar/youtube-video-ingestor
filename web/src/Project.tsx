@@ -5,6 +5,7 @@ import VideoRow from "./components/VideoRow";
 import ConfirmDialog from "./components/ConfirmDialog";
 import AddVideosModal from "./components/AddVideosModal";
 import IngestCard from "./components/IngestCard";
+import ProjectGraphSection from "./components/ProjectGraphSection";
 import SearchBar from "./components/SearchBar";
 import Toast, { type ToastKind } from "./components/Toast";
 import { type IngestState, listIngests, listTranscripts } from "./api";
@@ -412,6 +413,11 @@ export default function Project({ onMenuToggle }: ProjectPageProps) {
             </div>
           </section>
         )}
+
+        <ProjectGraphSection
+          projectId={project.id}
+          refreshKey={videos.length}
+        />
 
         {videos.length > 0 && (
           <div className="project-search">

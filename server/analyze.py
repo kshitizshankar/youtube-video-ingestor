@@ -358,6 +358,19 @@ def stream_analyze_video(
                     analysis_id,
                 ),
             )
+            # A fresh analysis means the project's graph is newly stale.
+            try:
+                proj_row = conn.execute(
+                    "SELECT project_id FROM videos WHERE id=?", (video_id,),
+                ).fetchone()
+                if proj_row and proj_row["project_id"]:
+                    from .graphify import bump_events_since_build
+                    bump_events_since_build(out_dir, proj_row["project_id"])
+            except Exception:
+                log.debug(
+                    "bump_events_since_build skipped for analysis %s",
+                    analysis_id, exc_info=True,
+                )
         else:
             conn.execute(
                 "UPDATE analyses SET status='error', finished_at=?, "

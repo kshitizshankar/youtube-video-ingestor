@@ -195,6 +195,7 @@ def api_refresh_metadata(video_id: str):
 def api_archive_video(video_id: str):
     if not transcripts.set_archived(OUTPUT_DIR, video_id, True):
         raise HTTPException(status_code=404, detail="not found")
+    _bump_owning_project(video_id)
     return {"ok": True, "archived": True}
 
 
@@ -202,7 +203,27 @@ def api_archive_video(video_id: str):
 def api_restore_video(video_id: str):
     if not transcripts.set_archived(OUTPUT_DIR, video_id, False):
         raise HTTPException(status_code=404, detail="not found")
+    _bump_owning_project(video_id)
     return {"ok": True, "archived": False}
+
+
+def _bump_owning_project(video_id: str) -> None:
+    """Look up the video's project and bump its events_since_build
+    counter. Used by archive/restore -- ingest and move bump from their
+    own code paths."""
+    try:
+        _c = open_connection(OUTPUT_DIR / "app.db")
+        try:
+            row = _c.execute(
+                "SELECT project_id FROM videos WHERE id=?", (video_id,),
+            ).fetchone()
+        finally:
+            _c.close()
+        if row and row["project_id"]:
+            from .graphify import bump_events_since_build
+            bump_events_since_build(OUTPUT_DIR, row["project_id"])
+    except Exception:
+        log.debug("_bump_owning_project failed for %s", video_id, exc_info=True)
 
 
 @app.post("/api/transcripts/{video_id}/move", dependencies=[Depends(auth.require_http)])
@@ -660,6 +681,94 @@ def api_remove_project_video(project_id: str, video_id: str):
     if not projects_mod.remove_video(OUTPUT_DIR, project_id, video_id):
         raise HTTPException(status_code=404, detail="membership not found")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# API: per-project knowledge graph (graphify integration)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/projects/{project_id}/graph/status", dependencies=[Depends(auth.require_http)])
+def api_graph_status(project_id: str):
+    from .graphify import get_graph_status
+    s = get_graph_status(OUTPUT_DIR, project_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    return s
+
+
+@app.get("/api/projects/{project_id}/graph/build", dependencies=[Depends(auth.require_http)])
+async def api_graph_build(
+    project_id: str,
+    mode: str = "update",
+):
+    """Kick a graphify run for the project. Query: ?mode=update|rebuild|deep.
+    Returns SSE stream of phase / usage / done / error events. GET (not
+    POST) so the browser's EventSource can subscribe directly."""
+    import asyncio
+    import json as _json
+    from .graphify import stream_graph_build
+
+    mode = (mode or "update").lower()
+    if mode not in ("update", "rebuild", "deep"):
+        raise HTTPException(status_code=400, detail=f"unknown mode: {mode}")
+
+    # Reject if the project doesn't exist (avoids spawning claude only
+    # to fail at the folder check).
+    proj = projects_mod.get_project(OUTPUT_DIR, project_id)
+    if proj is None:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    async def event_gen():
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
+
+        def worker() -> None:
+            try:
+                for evt in stream_graph_build(OUTPUT_DIR, project_id, mode=mode):
+                    loop.call_soon_threadsafe(q.put_nowait, evt)
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, SENTINEL)
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+        while True:
+            evt = await q.get()
+            if evt is SENTINEL:
+                break
+            yield {
+                "event": evt.get("type", "event"),
+                "data": _json.dumps(evt, ensure_ascii=False),
+            }
+
+    return EventSourceResponse(event_gen())
+
+
+@app.get(
+    "/api/projects/{project_id}/graph/file/{path:path}",
+    dependencies=[Depends(auth.require_http)],
+)
+def api_graph_static(project_id: str, path: str):
+    """Static-serve files from `output/projects/<id>/graphify-out/`.
+    The leading `file/` segment in the route disambiguates from
+    `/build` and `/status`. The path can be empty, in which case
+    `index.html` is returned."""
+    from fastapi.responses import FileResponse
+    from .layout import project_dir
+    from .graphify import GRAPH_OUT_SUBDIR
+    folder = (project_dir(OUTPUT_DIR, project_id) / GRAPH_OUT_SUBDIR).resolve()
+    if not folder.is_dir():
+        raise HTTPException(status_code=404, detail="graph not built yet")
+    target = (folder / (path or "index.html")).resolve()
+    # Path traversal guard: target MUST live under folder.
+    try:
+        target.relative_to(folder)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target)
 
 
 # ---------------------------------------------------------------------------
