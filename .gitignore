@@ -37,3 +37,7 @@ graphify-out/
 
 # Runtime server logs
 logs/
+
+# Runtime artifacts from one-shot maintenance scripts
+scripts/_*.json
+scripts/_*.log
