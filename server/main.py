@@ -62,6 +62,13 @@ try:
     migrate_data(_conn, OUTPUT_DIR)
     _conn.close()
     queue_mod.mark_queued_orphans()
+    # Move-protocol crash recovery: walk the move_log for any moves that
+    # didn't finish before the previous shutdown and resolve them
+    # before serving requests. Idempotent; clean tree -> no-op.
+    from .moves import recover_in_flight_moves
+    _recovery = recover_in_flight_moves(OUTPUT_DIR)
+    if any(_recovery.values()):
+        log.info("move recovery: %s", _recovery)
 except Exception as e:
     log.warning("DB bootstrap failed: %s", e)
 
@@ -196,6 +203,29 @@ def api_restore_video(video_id: str):
     if not transcripts.set_archived(OUTPUT_DIR, video_id, False):
         raise HTTPException(status_code=404, detail="not found")
     return {"ok": True, "archived": False}
+
+
+@app.post("/api/transcripts/{video_id}/move", dependencies=[Depends(auth.require_http)])
+def api_move_video(video_id: str, body: dict = Body(...)):
+    """Move a video into a different project. Body: {"project_id": "<id>"}.
+    Returns the from/to summary on success. Refuses (409) if a move is
+    already in progress, an ingest is active, or the destination is
+    already populated. Returns 400 for unknown project, 404 for unknown
+    video."""
+    target = (body or {}).get("project_id")
+    if not isinstance(target, str) or not target:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    from .moves import move_video, MoveError
+    try:
+        return move_video(OUTPUT_DIR, video_id, target)
+    except MoveError as e:
+        msg = str(e)
+        if "unknown video" in msg:
+            raise HTTPException(status_code=404, detail=msg)
+        if "unknown project" in msg:
+            raise HTTPException(status_code=400, detail=msg)
+        # already-in-progress, ingest-active, dst-exists, already-in -- all conflicts.
+        raise HTTPException(status_code=409, detail=msg)
 
 
 @app.delete("/api/transcripts/{video_id}", dependencies=[Depends(auth.require_http)])

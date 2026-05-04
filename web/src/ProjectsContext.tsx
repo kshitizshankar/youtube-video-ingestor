@@ -30,6 +30,7 @@ import {
   removeVideoFromProject,
   updateProject,
 } from "./projects";
+import { moveVideo as apiMoveVideo, type MoveVideoResult } from "./api";
 import type { Project, ProjectDetail } from "./types";
 
 interface ProjectsContextValue {
@@ -54,6 +55,11 @@ interface ProjectsContextValue {
   remove: (id: string) => Promise<void>;
   addVideos: (id: string, videoIds: string[]) => Promise<{ added: number }>;
   removeVideo: (projectId: string, videoId: string) => Promise<void>;
+  /** Reassign a single video into `projectId`. Triggers the server-side
+   *  move protocol (atomic rename when same drive; copy/verify/delete
+   *  otherwise). Refreshes the project list because membership counts
+   *  on both projects change. */
+  moveVideoToProject: (videoId: string, projectId: string) => Promise<MoveVideoResult>;
 }
 
 const ProjectsContext = createContext<ProjectsContextValue | null>(null);
@@ -142,6 +148,15 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const moveVideoToProject = useCallback(
+    async (videoId: string, projectId: string) => {
+      const r = await apiMoveVideo(videoId, projectId);
+      refresh();
+      return r;
+    },
+    [refresh],
+  );
+
   const value: ProjectsContextValue = {
     projects,
     projectsById,
@@ -153,6 +168,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     remove,
     addVideos,
     removeVideo,
+    moveVideoToProject,
   };
 
   return <ProjectsContext.Provider value={value}>{children}</ProjectsContext.Provider>;

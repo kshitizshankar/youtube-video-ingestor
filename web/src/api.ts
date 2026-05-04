@@ -208,6 +208,31 @@ export async function refreshMetadata(id: string): Promise<void> {
   }
 }
 
+export interface MoveVideoResult {
+  video_id: string;
+  from_project: string | null;
+  to_project: string;
+  from_path: string | null;
+  to_path: string;
+}
+
+/** Move a video into a different project. Server uses an atomic
+ *  rename when source and destination are on the same drive, falling
+ *  back to copy-verify-delete otherwise. Refuses (409) when an ingest
+ *  is active or another move is in progress. */
+export async function moveVideo(videoId: string, projectId: string): Promise<MoveVideoResult> {
+  const r = await authFetch(`/api/transcripts/${videoId}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`move failed: ${r.status} ${body}`);
+  }
+  return r.json();
+}
+
 export interface SearchHit {
   video_id: string;
   title: string;

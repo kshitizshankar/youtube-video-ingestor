@@ -13,8 +13,12 @@ export interface TranscriptSummary {
   upload_date?: string | null;     // "YYYYMMDD"
   view_count?: number | null;
   like_count?: number | null;
-  /** Projects this video belongs to. Empty array when unaffiliated. Used by
-   *  the library for badges + filtering. */
+  /** Single owning project (folder-per-project). Always set post-migration;
+   *  defaults to "inbox" for unassigned videos. */
+  project_id?: string | null;
+  /** Backwards-compat array shape kept for existing UI callsites that
+   *  iterate memberships. Always single-element (or empty for an
+   *  unmigrated row). */
   project_ids?: string[];
   /** Discriminator for which kind of media this row represents. The server
    *  always sets it; legacy rows default to "youtube". The UI should treat
@@ -198,6 +202,19 @@ export interface Project {
   last_activity: string | null;
   created_at: string;
   updated_at: string;
+  /** "inbox" for the system Inbox project (not deletable). NULL for user
+   *  projects. Reserved for future system kinds. */
+  system_kind?: string | null;
+  /** Knowledge-graph state for this project. "never" until the user has
+   *  triggered a build at least once. */
+  graph_state?: "never" | "building" | "ready" | "error";
+  graph_built_at?: string | null;
+  graph_node_count?: number | null;
+  graph_edge_count?: number | null;
+  /** Number of events (ingest, move, analysis, archive) since the last
+   *  successful graph build. Drives the "N events since last build"
+   *  badge on the project page. */
+  events_since_build?: number;
 }
 
 export interface ProjectVideoEntry {

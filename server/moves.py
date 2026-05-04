@@ -99,7 +99,12 @@ def move_video(out_dir: Path, video_id: str, new_project_id: str) -> dict:
         raise
 
     # Filesystem move outside the DB transaction so SQLite isn't holding
-    # a write lock while we copy gigabytes.
+    # a write lock while we copy gigabytes. Status transitions:
+    #   started -> verified -> committed
+    # `verified` means the destination is fully populated and the source
+    # is gone (or has been verified intact). Boot-time recovery uses
+    # 'verified' to detect a crash between the FS work and the DB swap
+    # (case C/D in the spec).
     try:
         if src_path and src_path.exists():
             dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,8 +113,7 @@ def move_video(out_dir: Path, video_id: str, new_project_id: str) -> dict:
                 src_path.rename(dst_path)
             except OSError:
                 # Cross-device or rename refused -- fall back to copy +
-                # verify + delete. This branch is the slice 3 hardening
-                # area; for now we trust shutil.copytree + size check.
+                # verify + delete.
                 shutil.copytree(src_path, dst_path)
                 for p in src_path.rglob("*"):
                     if not p.is_file():
@@ -121,6 +125,10 @@ def move_video(out_dir: Path, video_id: str, new_project_id: str) -> dict:
                         shutil.rmtree(dst_path, ignore_errors=True)
                         raise MoveError(f"verify failed at {mirror}")
                 shutil.rmtree(src_path)
+        conn.execute(
+            "UPDATE move_log SET status='verified' WHERE id=?",
+            (log_id,),
+        )
         conn.execute(
             "UPDATE move_log SET status='committed', finished_at=? WHERE id=?",
             (_iso_now(), log_id),
@@ -168,3 +176,176 @@ def move_video(out_dir: Path, video_id: str, new_project_id: str) -> dict:
         "from_path": str(src_path) if src_path else None,
         "to_path": str(dst_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# Crash recovery (called from main.py at startup, before serving requests).
+# ---------------------------------------------------------------------------
+
+
+def recover_in_flight_moves(out_dir: Path) -> dict:
+    """Scan for moves that were in flight when the server crashed and
+    bring them to a clean terminal state. Cases (matching the spec):
+
+      A: status='started', src exists, dst doesn't
+         -> copy never started; clear move_state, mark rolled_back.
+      B: status='started', both exist
+         -> copy may be partial; rmtree(dst); same as A.
+      C: status='verified', both exist
+         -> verify done but commit didn't; rerun the DB swap, clean src.
+      D: status='verified', only dst exists
+         -> move done in FS, DB never updated; rerun the DB swap.
+      E: status='started', neither exists
+         -> the source vanished; we can't recover automatically. Log a
+            warning and leave the row's move_state cleared so a manual
+            operator can reassign.
+
+    Returns a dict of counts per resolution kind for logging."""
+    from .db import open_connection
+
+    db_path = out_dir / "app.db"
+    if not db_path.exists():
+        return {"recovered": 0, "rolled_back": 0, "manual_review": 0}
+
+    conn = open_connection(db_path)
+    counts = {"recovered": 0, "rolled_back": 0, "manual_review": 0}
+    try:
+        # Find every video with move_state != NULL OR an unfinished
+        # move_log row. Build a unique work list keyed on video_id.
+        rows = conn.execute(
+            "SELECT v.id AS video_id, v.move_state, v.project_id AS current_project, "
+            "       v.path AS current_path "
+            "FROM videos v WHERE v.move_state IS NOT NULL"
+        ).fetchall()
+        for r in rows:
+            video_id = r["video_id"]
+            log_row = conn.execute(
+                "SELECT id, from_project, to_project, from_path, to_path, status "
+                "FROM move_log WHERE video_id=? AND status IN ('started','verified') "
+                "ORDER BY id DESC LIMIT 1",
+                (video_id,),
+            ).fetchone()
+            if log_row is None:
+                # move_state set but no log row -- inconsistent. Clear
+                # the latch so the operator can take over.
+                conn.execute(
+                    "UPDATE videos SET move_state=NULL, updated_at=? WHERE id=?",
+                    (_iso_now(), video_id),
+                )
+                counts["manual_review"] += 1
+                continue
+
+            src = Path(log_row["from_path"]) if log_row["from_path"] else None
+            dst = Path(log_row["to_path"]) if log_row["to_path"] else None
+            src_exists = bool(src and src.exists())
+            dst_exists = bool(dst and dst.exists())
+
+            if log_row["status"] == "started":
+                # Cases A / B: copy didn't certifiably finish. Discard
+                # any partial dst, leave src in place, and roll the DB
+                # back to its from_project state.
+                if dst_exists and src_exists:
+                    shutil.rmtree(dst, ignore_errors=True)
+                    dst_exists = False
+                if src_exists:
+                    conn.execute(
+                        "UPDATE videos SET move_state=NULL, project_id=?, path=?, "
+                        "updated_at=? WHERE id=?",
+                        (
+                            log_row["from_project"],
+                            str(src),
+                            _iso_now(),
+                            video_id,
+                        ),
+                    )
+                    conn.execute(
+                        "UPDATE move_log SET status='rolled_back', finished_at=?, "
+                        "error='recovery: source preserved; copy did not commit' "
+                        "WHERE id=?",
+                        (_iso_now(), log_row["id"]),
+                    )
+                    counts["rolled_back"] += 1
+                    forget_video_path(video_id)
+                else:
+                    # Case E: neither side has a folder. The data is
+                    # gone and we can't tell whether to point the row
+                    # at the old or new project. Clear the latch and
+                    # surface a warning; the operator decides next.
+                    conn.execute(
+                        "UPDATE videos SET move_state=NULL, updated_at=? WHERE id=?",
+                        (_iso_now(), video_id),
+                    )
+                    conn.execute(
+                        "UPDATE move_log SET status='failed', finished_at=?, "
+                        "error='recovery: both src and dst missing; manual review needed' "
+                        "WHERE id=?",
+                        (_iso_now(), log_row["id"]),
+                    )
+                    log.warning(
+                        "move recovery: video %s has no folder at either path; "
+                        "from=%s to=%s -- manual review needed",
+                        video_id, log_row["from_path"], log_row["to_path"],
+                    )
+                    counts["manual_review"] += 1
+            elif log_row["status"] == "verified":
+                # Cases C / D: the FS side committed; the DB write
+                # didn't. Roll forward to the destination.
+                if not dst_exists:
+                    # Even verified, nothing on disk -- treat like case
+                    # B and roll back if possible.
+                    if src_exists:
+                        conn.execute(
+                            "UPDATE videos SET move_state=NULL, project_id=?, path=?, "
+                            "updated_at=? WHERE id=?",
+                            (
+                                log_row["from_project"],
+                                str(src),
+                                _iso_now(),
+                                video_id,
+                            ),
+                        )
+                        conn.execute(
+                            "UPDATE move_log SET status='rolled_back', finished_at=?, "
+                            "error='recovery: verified but dst missing; rolled back to src' "
+                            "WHERE id=?",
+                            (_iso_now(), log_row["id"]),
+                        )
+                        counts["rolled_back"] += 1
+                        forget_video_path(video_id)
+                    else:
+                        conn.execute(
+                            "UPDATE videos SET move_state=NULL, updated_at=? WHERE id=?",
+                            (_iso_now(), video_id),
+                        )
+                        conn.execute(
+                            "UPDATE move_log SET status='failed', finished_at=?, "
+                            "error='recovery: verified but neither path exists' "
+                            "WHERE id=?",
+                            (_iso_now(), log_row["id"]),
+                        )
+                        counts["manual_review"] += 1
+                    continue
+                # Case C: clean up the orphaned source (verified means
+                # the dst is good).
+                if src_exists:
+                    shutil.rmtree(src, ignore_errors=True)
+                conn.execute(
+                    "UPDATE videos SET move_state=NULL, project_id=?, path=?, "
+                    "updated_at=? WHERE id=?",
+                    (
+                        log_row["to_project"],
+                        str(dst),
+                        _iso_now(),
+                        video_id,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE move_log SET status='committed', finished_at=?, "
+                    "error='recovery: rolled forward to dst' WHERE id=?",
+                    (_iso_now(), log_row["id"]),
+                )
+                counts["recovered"] += 1
+                forget_video_path(video_id)
+    finally:
+        conn.close()
+    return counts
