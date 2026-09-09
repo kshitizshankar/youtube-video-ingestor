@@ -1,4 +1,4 @@
-# youtube-video-ingestor
+# [POC] youtube-video-ingestor
 
 Local YouTube transcription pipeline. Pulls a video's audio with `yt-dlp`,
 transcribes it with `faster-whisper` (optionally via `WhisperX` for speaker
